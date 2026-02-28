@@ -51,3 +51,5 @@
 21. **Gemini SDK increases client bundle size.** Adding `@google/genai` in browser builds increased the main bundle size warning threshold in Vite. For demo stability this is acceptable, but production should consider code-splitting the agent path or moving LLM calls behind a backend proxy.
 
 22. **Placed extracted assets also need the Spark orientation quaternion.** When re-inserting an extracted `PackedSplats` asset via `new SplatMesh({ packedSplats })`, set `mesh.quaternion.set(1, 0, 0, 0)` before placement. Using identity quaternion can produce incorrect orientation relative to the loaded scene.
+
+23. **Asset extraction can silently return empty if selection is too small or shape type is unsupported.** If a delete op produces no library item, check extraction logs (`[asset-library]`) for: unsupported shape types, low kept splat count, or aggressive thresholds. Current implementation supports `SPHERE`, `ELLIPSOID`, `BOX`, `CYLINDER`, and `CAPSULE`, with `MIN_ASSET_SPLATS=8`.

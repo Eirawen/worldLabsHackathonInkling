@@ -290,6 +290,13 @@ export function initUI(deps: UIDependencies): void {
           "system",
           `Saved ${createdCount} asset${createdCount === 1 ? "" : "s"} to library.`
         );
+      } else if (operations.some((op) => op.action === "delete")) {
+        showToast("Delete applied, but asset capture was empty", 3200);
+        appendMessage(
+          messages,
+          "system",
+          "Delete applied, but no reusable asset was captured from that region."
+        );
       }
 
       setStatus(status, "Ready");
