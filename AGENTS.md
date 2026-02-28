@@ -2,7 +2,7 @@
 
 ## Project Context
 
-You are working on **Marble Muse**, a real-time language-driven editing layer for World Labs' Marble gaussian splat worlds. The app runs in the browser using Vite + Three.js + Spark (World Labs' gaussian splat renderer). Users click on regions of a 3D gaussian splat scene and issue natural language commands that are translated by Claude's API into Spark SplatEdit SDF operations, executed on the GPU in real-time.
+You are working on **Marble Muse**, a real-time language-driven editing layer for World Labs' Marble gaussian splat worlds. The app runs in the browser using Vite + Three.js + Spark (World Labs' gaussian splat renderer). Users click on regions of a 3D gaussian splat scene and issue natural language commands that are translated by Gemini's API into Spark SplatEdit SDF operations, executed on the GPU in real-time.
 
 **Read the README.md first for full project context.**
 
@@ -203,11 +203,11 @@ splatMesh.forEachSplat((index, center, scales, quaternion, opacity, color) => {
 Responsibilities:
 - Take 4-6 screenshots from different camera angles (front, back, left, right, top, bird's-eye)
 - Serialize the spatial grid's occupied cells to JSON
-- Send grid JSON + screenshots to Claude Vision API
-- Parse Claude's response into a `SceneManifest` with semantic region labels
+- Send grid JSON + screenshots to Gemini vision API
+- Parse Gemini's response into a `SceneManifest` with semantic region labels
 - Cache the manifest — this is a one-time operation per scene
 
-The LLM prompt should ask Claude to:
+The LLM prompt should ask Gemini to:
 1. Describe the scene in natural language
 2. Identify distinct objects/regions
 3. Map them to grid cell clusters
@@ -219,11 +219,11 @@ The LLM prompt should ask Claude to:
 Responsibilities:
 - Accept: user command (string), click position (Vector3 | null), current screenshot, scene manifest
 - If click position provided, look up the voxel cell and its neighbors, include bounding box and color data
-- Construct the Claude API prompt with all context
-- Parse Claude's structured JSON response into `EditOperation[]`
+- Construct the Gemini API prompt with all context
+- Parse Gemini's structured JSON response into `EditOperation[]`
 - Handle edge cases: clarification requests, multi-step edits, undo
 
-The Claude system prompt should instruct it to:
+The Gemini system prompt should instruct it to:
 1. Reason about what the user wants
 2. Determine which SDF shapes best approximate the target region
 3. Output a JSON array of `EditOperation` objects
@@ -315,43 +315,40 @@ Responsibilities:
 
 - **No classes unless necessary.** Prefer modules exporting functions and plain objects.
 - **Async/await everywhere.** No raw promises or callbacks.
-- **Error boundaries around Claude API calls.** Network can fail. Always have a fallback or retry.
+- **Error boundaries around Gemini API calls.** Network can fail. Always have a fallback or retry.
 - **Console.log liberally during development.** Prefix with module name: `[agent]`, `[executor]`, `[spatial]`, etc.
 - **No external UI frameworks.** Vanilla TS + DOM. CSS goes in `src/styles.css`.
 - **Scenes in `public/scenes/`.** Vite serves these statically.
-- **Environment variables in `.env`.** Only `VITE_ANTHROPIC_API_KEY` for now. **IMPORTANT: Claude API calls should go through a tiny backend proxy or be made client-side with appropriate CORS handling. For the hackathon, client-side direct calls are fine.**
+- **Environment variables in `.env`.** Only `VITE_GEMINI_API_KEY` for now. **IMPORTANT: Gemini API calls should go through a tiny backend proxy or be made client-side with appropriate CORS handling. For the hackathon, client-side direct calls are fine.**
 
 ---
 
-## Claude API Integration Pattern
+## Gemini API Integration Pattern
 
 ```typescript
-const response = await fetch("https://api.anthropic.com/v1/messages", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    "x-api-key": import.meta.env.VITE_ANTHROPIC_API_KEY,
-    "anthropic-version": "2023-06-01",
-    "anthropic-dangerous-direct-browser-access": "true",
+import { GoogleGenAI } from "@google/genai";
+
+const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
+const response = await ai.models.generateContent({
+  model: "gemini-3-flash-preview",
+  contents: [
+    {
+      role: "user",
+      parts: [
+        { inlineData: { mimeType: "image/png", data: screenshotBase64 } },
+        { text: userPromptWithContext },
+      ],
+    },
+  ],
+  config: {
+    temperature: 0,
+    maxOutputTokens: 4096,
+    systemInstruction: SYSTEM_PROMPT,
   },
-  body: JSON.stringify({
-    model: "claude-sonnet-4-20250514",
-    max_tokens: 4096,
-    system: SYSTEM_PROMPT,
-    messages: [
-      {
-        role: "user",
-        content: [
-          { type: "image", source: { type: "base64", media_type: "image/png", data: screenshotBase64 } },
-          { type: "text", text: userPromptWithContext }
-        ]
-      }
-    ]
-  })
 });
 ```
 
-Use `claude-sonnet-4-20250514` for speed. The agent needs to be fast (2-4 seconds), not maximally intelligent. Sonnet is plenty smart for SDF shape reasoning.
+Use `gemini-3-flash-preview` for speed. The agent needs to be fast (2-4 seconds), not maximally intelligent.
 
 ---
 
@@ -360,7 +357,7 @@ Use `claude-sonnet-4-20250514` for speed. The agent needs to be fast (2-4 second
 - **Manual testing during development.** Load a .spz, click around, type commands, verify SplatEdits appear correctly.
 - **Pre-bake demo scenes.** Have 2-3 .spz files ready with known objects (trees, buildings, vehicles) for reliable demo flows.
 - **Test SDF shapes in isolation first.** Before wiring up the LLM, hardcode a `SplatEdit` with a sphere at a known position and verify it renders. This validates the Spark integration before adding complexity.
-- **Log all Claude API responses.** Write them to `/codex/worklog.md` so you can debug prompt issues.
+- **Log all Gemini API responses.** Write them to `/codex/worklog.md` so you can debug prompt issues.
 
 ---
 

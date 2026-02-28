@@ -4,7 +4,7 @@
 
 **Marble Muse** is a real-time, language-driven editing layer for Marble's gaussian splat worlds. You walk through a 3D world in your browser, click on things, talk to them, and they change. Remove objects, shift the atmosphere, relight the scene, extract assets into a reusable library, and composite elements across worlds — all through natural conversation with an AI that understands 3D space.
 
-Built on **Spark** (World Labs' open-source gaussian splat renderer) and powered by **Claude** for spatial reasoning, Marble Muse turns Marble's 6-minute generation cycle into a real-time creative loop.
+Built on **Spark** (World Labs' open-source gaussian splat renderer) and powered by **Gemini** for spatial reasoning, Marble Muse turns Marble's 6-minute generation cycle into a real-time creative loop.
 
 ---
 
@@ -33,7 +33,7 @@ No regeneration. No waiting. 60fps in the browser.
 │                    MARBLE MUSE                          │
 │                                                         │
 │  ┌──────────┐    ┌──────────────┐    ┌──────────────┐  │
-│  │  Spark    │    │  Spatial     │    │  Claude      │  │
+│  │  Spark    │    │  Spatial     │    │  Gemini      │  │
 │  │  Viewer   │◄──►│  Index      │◄──►│  Agent       │  │
 │  │          │    │  (Grid)      │    │  (Reasoning) │  │
 │  └────┬─────┘    └──────────────┘    └──────┬───────┘  │
@@ -54,9 +54,9 @@ No regeneration. No waiting. 60fps in the browser.
 
 1. **Load** — Marble .spz file loaded via Spark's `SplatMesh({ url })` into a Three.js scene
 2. **Index** — `forEachSplat()` builds a 20×20×20 spatial voxel grid over the cropped bounding box. Each occupied cell stores centroid, splat count, average color, density, and bounding extents
-3. **Understand** — Multi-angle screenshots + voxel grid JSON fed to Claude Vision to generate a semantic scene manifest (one-time, cached)
+3. **Understand** — Multi-angle screenshots + voxel grid JSON fed to Gemini vision to generate a semantic scene manifest (one-time, cached)
 4. **Interact** — User clicks (Spark's built-in `raycast()`) to select a region, then types a natural language command
-5. **Reason** — Claude receives: scene manifest + click position + voxel cell data + current camera screenshot + user command. Outputs structured JSON describing SplatEdit SDF operations
+5. **Reason** — Gemini receives: scene manifest + click position + voxel cell data + current camera screenshot + user command. Outputs structured JSON describing SplatEdit SDF operations
 6. **Execute** — JSON parsed into Spark `SplatEdit` + `SplatEditSdf` objects (spheres, boxes, cones, planes). Applied on the GPU in real-time at 60fps
 7. **Extract** — On delete operations, splats in the affected region are simultaneously extracted via `forEachSplat()`, filtered (by color coherence, density, opacity), normalized, and saved as reusable `PackedSplats` assets in the library
 8. **Reuse** — Assets from the library can be placed into any scene via click-to-place + `pushSplat()`
@@ -89,8 +89,8 @@ These map naturally to spatial editing concepts: spheres for point selections, b
 | 3D Engine | **Three.js** | Scene graph, camera controls, raycasting |
 | Build | **Vite** | Dev server, HMR, bundling |
 | Language | **TypeScript** | Type safety for splat data structures |
-| AI Agent | **Claude API** (Anthropic) | Spatial reasoning, command → SDF translation |
-| Vision | **Claude Vision** | Scene understanding from screenshots |
+| AI Agent | **Gemini API** (`@google/genai`) | Spatial reasoning, command → SDF translation |
+| Vision | **Gemini multimodal input** | Scene understanding from screenshots |
 | Input Format | **.spz** (Niantic/World Labs) | Compressed gaussian splat files from Marble |
 | TTS (stretch) | **Web Speech API** | Voice input for hands-free editing |
 
@@ -105,7 +105,7 @@ marble-muse/
 │   ├── main.ts             # App init, Spark setup, render loop
 │   ├── viewer.ts           # SplatMesh loading, camera controls, raycasting
 │   ├── spatial-index.ts    # Voxel grid construction and querying
-│   ├── scene-manifest.ts   # Scene understanding via Claude Vision
+│   ├── scene-manifest.ts   # Scene understanding via Gemini vision
 │   ├── agent.ts            # Natural language → SplatEdit JSON pipeline
 │   ├── executor.ts         # JSON → Spark SplatEdit/SplatEditSdf objects
 │   ├── asset-library.ts    # Extraction, filtering, storage, placement
@@ -167,7 +167,7 @@ npm install
 npm run dev
 ```
 
-Set `ANTHROPIC_API_KEY` in `.env` for Claude API access.
+Set `VITE_GEMINI_API_KEY` in `.env` for Gemini API access.
 
 Place `.spz` files exported from Marble in `public/scenes/`.
 

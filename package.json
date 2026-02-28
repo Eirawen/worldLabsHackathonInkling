@@ -11,6 +11,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@google/genai": "^1.43.0",
     "@sparkjsdev/spark": "^0.1.10",
     "three": "^0.178.0"
   },

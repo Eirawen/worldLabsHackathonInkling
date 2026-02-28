@@ -1,13 +1,29 @@
 import * as THREE from "three";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildClickContext, processCommand, SYSTEM_PROMPT } from "../src/agent";
 import type { VoxelCell } from "../src/types";
 
-type FetchMock = ReturnType<typeof vi.fn>;
+const { mockGenerateContent, mockGoogleGenAI } = vi.hoisted(() => {
+  const generateContent = vi.fn();
+  const GoogleGenAI = vi.fn(() => ({
+    models: { generateContent },
+  }));
+
+  return {
+    mockGenerateContent: generateContent,
+    mockGoogleGenAI: GoogleGenAI,
+  };
+});
+
+vi.mock("@google/genai", () => ({
+  GoogleGenAI: mockGoogleGenAI,
+}));
+
+import { buildClickContext, processCommand, SYSTEM_PROMPT } from "../src/agent";
 
 const API_KEY = "test-api-key";
 
 afterEach(() => {
+  vi.clearAllMocks();
   vi.restoreAllMocks();
 });
 
@@ -49,11 +65,12 @@ describe("buildClickContext", () => {
 
 describe("processCommand", () => {
   it("parses raw JSON response and enforces delete defaults", async () => {
-    const fetchMock = mockFetchWithResponses([
-      anthropicOkResponse(
-        '[{"action":"delete","blendMode":"ADD_RGBA","shapes":[{"type":"SPHERE","position":[1,2,3],"opacity":1}]}]'
-      ),
-    ]);
+    mockGenerateContent.mockResolvedValueOnce(
+      geminiResponse(
+        '[{"action":"delete","blendMode":"ADD_RGBA","shapes":[{"type":"SPHERE","position":[1,2,3],"opacity":1}]}' +
+          "]"
+      )
+    );
 
     const ops = await processCommand(
       "remove this",
@@ -64,7 +81,7 @@ describe("processCommand", () => {
       API_KEY
     );
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(mockGenerateContent).toHaveBeenCalledTimes(1);
     expect(ops).toHaveLength(1);
     expect(ops[0]?.action).toBe("delete");
     expect(ops[0]?.blendMode).toBe("MULTIPLY");
@@ -75,18 +92,13 @@ describe("processCommand", () => {
   });
 
   it("parses markdown-wrapped JSON", async () => {
-    mockFetchWithResponses([
-      anthropicOkResponse('```json\n[{"action":"light","blendMode":"ADD_RGBA","shapes":[{"type":"SPHERE","position":[0,3,0],"radius":4.5,"color":[0.2,0.1,0.05]}]}]\n```'),
-    ]);
-
-    const ops = await processCommand(
-      "make it warmer",
-      null,
-      null,
-      null,
-      null,
-      API_KEY
+    mockGenerateContent.mockResolvedValueOnce(
+      geminiResponse(
+        '```json\n[{"action":"light","blendMode":"ADD_RGBA","shapes":[{"type":"SPHERE","position":[0,3,0],"radius":4.5,"color":[0.2,0.1,0.05]}]}]\n```'
+      )
     );
+
+    const ops = await processCommand("make it warmer", null, null, null, null, API_KEY);
 
     expect(ops).toHaveLength(1);
     expect(ops[0]?.action).toBe("light");
@@ -95,12 +107,13 @@ describe("processCommand", () => {
   });
 
   it("retries once when first parse fails and succeeds on second response", async () => {
-    const fetchMock = mockFetchWithResponses([
-      anthropicOkResponse('{ "not": "array" }'),
-      anthropicOkResponse(
-        '[{"action":"recolor","blendMode":"SET_RGB","shapes":[{"type":"BOX","position":[0,0,0],"scale":[1,1,1],"color":[0.9,0.2,0.2]}]}]'
-      ),
-    ]);
+    mockGenerateContent
+      .mockResolvedValueOnce(geminiResponse('{ "not": "array" }'))
+      .mockResolvedValueOnce(
+        geminiResponse(
+          '[{"action":"recolor","blendMode":"SET_RGB","shapes":[{"type":"BOX","position":[0,0,0],"scale":[1,1,1],"color":[0.9,0.2,0.2]}]}]'
+        )
+      );
 
     const ops = await processCommand(
       "make this red",
@@ -111,93 +124,89 @@ describe("processCommand", () => {
       API_KEY
     );
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(mockGenerateContent).toHaveBeenCalledTimes(2);
     expect(ops).toHaveLength(1);
     expect(ops[0]?.action).toBe("recolor");
 
-    const firstBody = getFetchBody(fetchMock, 0);
-    const secondBody = getFetchBody(fetchMock, 1);
-    expect(firstBody.messages[0].content[0].type).toBe("image");
-    expect(firstBody.messages[0].content[0].source.data).toBe("QUJDRA==");
-    expect(secondBody.messages[0].content[1].text).toContain(
+    const firstReq = getGenerateContentRequest(0);
+    const secondReq = getGenerateContentRequest(1);
+
+    expect(firstReq.model).toBe("gemini-3-flash-preview");
+    expect(firstReq.config.temperature).toBe(0);
+    expect(firstReq.config.maxOutputTokens).toBe(4096);
+    expect(firstReq.config.systemInstruction).toContain("spatial editing assistant");
+    expect(firstReq.contents[0].parts[0].inlineData.data).toBe("QUJDRA==");
+    expect(firstReq.contents[0].parts[1].text).toContain("User command: make this red");
+    expect(secondReq.contents[0].parts[0].inlineData.data).toBe("QUJDRA==");
+    expect(secondReq.contents[0].parts[1].text).toContain(
       "Return only valid JSON array of EditOperation objects. No markdown."
     );
   });
 
   it("throws after retry exhaustion on invalid shape schema", async () => {
-    const fetchMock = mockFetchWithResponses([
-      anthropicOkResponse(
-        '[{"action":"light","blendMode":"ADD_RGBA","shapes":[{"type":"NOT_A_SHAPE","position":[0,0,0]}]}]'
-      ),
-      anthropicOkResponse(
-        '[{"action":"light","blendMode":"ADD_RGBA","shapes":[{"type":"NOT_A_SHAPE","position":[0,0,0]}]}]'
-      ),
-    ]);
+    mockGenerateContent
+      .mockResolvedValueOnce(
+        geminiResponse(
+          '[{"action":"light","blendMode":"ADD_RGBA","shapes":[{"type":"NOT_A_SHAPE","position":[0,0,0]}]}]'
+        )
+      )
+      .mockResolvedValueOnce(
+        geminiResponse(
+          '[{"action":"light","blendMode":"ADD_RGBA","shapes":[{"type":"NOT_A_SHAPE","position":[0,0,0]}]}]'
+        )
+      );
 
     await expect(
       processCommand("bad output", null, null, null, null, API_KEY)
     ).rejects.toThrow("invalid type");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(mockGenerateContent).toHaveBeenCalledTimes(2);
   });
 
-  it("sends required Anthropic headers and request body fields", async () => {
-    const fetchMock = mockFetchWithResponses([
-      anthropicOkResponse(
+  it("falls back to candidate text extraction when response.text is missing", async () => {
+    mockGenerateContent.mockResolvedValueOnce({
+      candidates: [
+        {
+          content: {
+            parts: [
+              {
+                text: '[{"action":"atmosphere","blendMode":"ADD_RGBA","shapes":[{"type":"ALL","position":[0,0,0],"color":[0.05,0.05,0.08]}]}]',
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    const ops = await processCommand("make it foggy", null, null, null, null, API_KEY);
+
+    expect(ops).toHaveLength(1);
+    expect(ops[0]?.action).toBe("atmosphere");
+  });
+
+  it("instantiates Gemini client with provided API key", async () => {
+    mockGenerateContent.mockResolvedValueOnce(
+      geminiResponse(
         '[{"action":"atmosphere","blendMode":"ADD_RGBA","shapes":[{"type":"ALL","position":[0,0,0],"color":[0.05,0.05,0.08]}]}]'
-      ),
-    ]);
+      )
+    );
 
     await processCommand("make it foggy", null, null, null, null, API_KEY);
 
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("https://api.anthropic.com/v1/messages");
-    expect(init.method).toBe("POST");
-    expect(init.headers).toMatchObject({
-      "Content-Type": "application/json",
-      "x-api-key": API_KEY,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    });
-
-    const body = JSON.parse(String(init.body)) as {
-      model: string;
-      temperature: number;
-      max_tokens: number;
-      messages: Array<{ content: Array<{ type: string }> }>;
-    };
-    expect(body.model).toBe("claude-sonnet-4-20250514");
-    expect(body.temperature).toBe(0);
-    expect(body.max_tokens).toBe(4096);
-    expect(body.messages[0]?.content.at(-1)?.type).toBe("text");
+    expect(mockGoogleGenAI).toHaveBeenCalledTimes(1);
+    expect(mockGoogleGenAI).toHaveBeenCalledWith({ apiKey: API_KEY });
   });
 });
 
-function mockFetchWithResponses(responses: Response[]): FetchMock {
-  const fetchMock = vi.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>();
-  for (const response of responses) {
-    fetchMock.mockResolvedValueOnce(response);
-  }
-  vi.stubGlobal("fetch", fetchMock);
-  return fetchMock;
+function geminiResponse(text: string): { text: string } {
+  return { text };
 }
 
-function anthropicOkResponse(text: string): Response {
-  return new Response(
-    JSON.stringify({
-      content: [{ type: "text", text }],
-    }),
-    {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    }
-  );
-}
-
-function getFetchBody(fetchMock: FetchMock, callIndex: number): {
-  messages: Array<{ content: Array<{ type: string; source?: { data: string }; text?: string }> }>;
+function getGenerateContentRequest(callIndex: number): {
+  model: string;
+  contents: Array<{ parts: Array<{ inlineData?: { data: string }; text?: string }> }>;
+  config: { temperature: number; maxOutputTokens: number; systemInstruction: string };
 } {
-  const [, init] = fetchMock.mock.calls[callIndex] as [string, RequestInit];
-  return JSON.parse(String(init.body));
+  return mockGenerateContent.mock.calls[callIndex][0];
 }
 
 function makeCell(
@@ -208,10 +217,7 @@ function makeCell(
   avgColor: [number, number, number],
   colorVariance: number
 ): VoxelCell {
-  const bounds = new THREE.Box3(
-    new THREE.Vector3(...min),
-    new THREE.Vector3(...max)
-  );
+  const bounds = new THREE.Box3(new THREE.Vector3(...min), new THREE.Vector3(...max));
   const center = new THREE.Vector3().addVectors(bounds.min, bounds.max).multiplyScalar(0.5);
   return {
     gridPos,

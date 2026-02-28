@@ -23,7 +23,7 @@
   - [x] Configure `tsconfig.json` (strict mode, ESNext target)
   - [x] Create directory structure per README
   - [x] Create `/codex` directory with empty `gotchas.md`, `worklog.md`, `decisions.md`, `spark-api-notes.md` (repo already initialized; files now updated)
-  - [x] Create `.env` with `VITE_ANTHROPIC_API_KEY=`
+  - [x] Create `.env` with `VITE_GEMINI_API_KEY=`
   - [x] Create `.gitignore` (node_modules, dist, .env)
   - [ ] Verify `npm run dev` serves on localhost (blocked in sandbox: `listen EPERM`)
 - **Acceptance:** Running dev server with empty page, no errors in console.
@@ -111,13 +111,13 @@
   - [x] Compute per-cell stats: average color, color variance, density, bounding box
   - [x] Implement `getCellAtWorldPos(pos: THREE.Vector3): VoxelCell | null`
   - [x] Implement `getNeighborCells(cell: VoxelCell, radius: number): VoxelCell[]`
-  - [x] Implement `serializeForLLM(): string` — JSON of occupied cells (positions, colors, densities, dimensions) suitable for Claude's context (`serializeSpatialGridForLLM`)
+  - [x] Implement `serializeForLLM(): string` — JSON of occupied cells (positions, colors, densities, dimensions) suitable for Gemini's context (`serializeSpatialGridForLLM`)
   - [x] Measure and log time taken for grid construction (logging implemented; needs runtime measurement in browser)
 - **Test:** After scene loads, grid builds in < 1 second. `getCellAtWorldPos` returns correct cell for a known position. Serialized JSON is < 50KB.
 
 ---
 
-### T07: Agent — Claude Command Pipeline
+### T07: Agent — Gemini Command Pipeline
 - **Status:** TODO
 - **Depends on:** T05, T06
 - **Produces:** `src/agent.ts` — takes user command + context → returns EditOperation[]
@@ -133,8 +133,8 @@
     - Instruct to use `softEdge` for natural-looking edits
   - [ ] Implement `processCommand(command: string, clickPos: Vector3 | null, voxelContext: string, screenshot: string): Promise<EditOperation[]>`
   - [ ] Construct the user message: scene manifest summary + click position + nearby voxel cell data + screenshot (base64) + user command
-  - [ ] Call Claude API (Sonnet) with vision
-  - [ ] Parse response — extract JSON from Claude's response (handle markdown code blocks)
+  - [ ] Call Gemini API (Flash 3) with multimodal input
+  - [ ] Parse response — extract JSON from Gemini's response (handle markdown code blocks)
   - [ ] Validate parsed operations against type definitions
   - [ ] Handle errors gracefully (API timeout, malformed response, etc.)
   - [ ] Add retry logic (1 retry on failure)
@@ -167,7 +167,7 @@
 - **Produces:** `src/ui.ts` — chat input at bottom of screen, wired to agent → executor pipeline
 - **Tasks:**
   - [ ] Create fixed-bottom chat input bar (text input + send button)
-  - [ ] Show loading spinner while Claude is processing
+  - [ ] Show loading spinner while Gemini is processing
   - [ ] Display brief confirmation toast on successful edit ("Tree removed ✓")
   - [ ] Display error messages if agent fails
   - [ ] Wire: user types → agent.processCommand() → executor.executeOperations()
@@ -182,14 +182,14 @@
 ### T10: Scene Manifest (Simplified for MVP)
 - **Status:** DONE (implemented with heuristic labeling, flood-fill grouping, description generation)
 - **Depends on:** T06
-- **Produces:** `src/scene-manifest.ts` — basic scene understanding without full Claude Vision analysis
+- **Produces:** `src/scene-manifest.ts` — basic scene understanding without full Gemini vision analysis
 - **Tasks:**
-  - [x] For MVP: skip the multi-angle Claude Vision analysis
+  - [x] For MVP: skip the multi-angle Gemini vision analysis
   - [x] Instead, just serialize the spatial grid as the "manifest"
   - [x] Include: occupied cell positions, average colors, densities, estimated labels based on color/height heuristics (green + tall = tree, grey + flat + y≈0 = road, etc.)
   - [x] This gives the agent enough spatial context without an extra API call
   - [x] Implement `getManifestJSON(): string`
-- **Notes:** Full Claude Vision scene understanding is P1. For MVP, the voxel grid + click position + screenshot is enough context for the agent to reason about edits.
+- **Notes:** Full Gemini vision scene understanding is P1. For MVP, the voxel grid + click position + screenshot is enough context for the agent to reason about edits.
 - **Test:** Manifest JSON is < 50KB, contains meaningful spatial information.
 
 ---
@@ -206,7 +206,7 @@
   - [ ] Write down the exact demo script with timings
   - [ ] Test undo flow
   - [ ] Test multiple edits in sequence
-  - [ ] Optimize Claude prompt based on testing (iterate on system prompt for better shape outputs)
+  - [ ] Optimize Gemini prompt based on testing (iterate on system prompt for better shape outputs)
   - [ ] Build and test production build: `npm run build && npx serve dist`
   - [ ] Measure and verify acceptable performance (>30fps on a laptop)
 - **Test:** Can run through the 60-second demo script smoothly with no errors.
@@ -275,13 +275,13 @@
 
 ---
 
-### T15: Full Scene Manifest via Claude Vision
+### T15: Full Scene Manifest via Gemini Vision
 - **Status:** TODO
 - **Depends on:** T06, T10
-- **Produces:** Enhanced `src/scene-manifest.ts` with Claude Vision analysis
+- **Produces:** Enhanced `src/scene-manifest.ts` with Gemini vision analysis
 - **Tasks:**
   - [ ] Capture screenshots from 4-6 angles (programmatically move camera, render, capture)
-  - [ ] Send screenshots + grid JSON to Claude Vision
+  - [ ] Send screenshots + grid JSON to Gemini vision
   - [ ] Parse response into SemanticRegion[] with labels
   - [ ] Cache manifest as JSON file for demo scenes
   - [ ] Update agent.ts to include richer semantic context

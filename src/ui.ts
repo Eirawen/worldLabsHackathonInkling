@@ -97,7 +97,7 @@ export function initUI(deps: UIDependencies): void {
       const manifest = deps.getManifest();
       const splatMesh = deps.getSplatMesh();
       const screenshot = normalizeScreenshotDataUrl(deps.getScreenshot());
-      const apiKey = String(import.meta.env.VITE_ANTHROPIC_API_KEY ?? "").trim();
+      const apiKey = String(import.meta.env.VITE_GEMINI_API_KEY ?? "").trim();
 
       const voxelContext = buildVoxelContext(grid, clickPoint);
       const manifestSummary = manifest ? getManifestJSON(manifest) : null;
