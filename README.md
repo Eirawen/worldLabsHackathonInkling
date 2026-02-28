@@ -2,7 +2,7 @@
 
 > Generate once with Marble. Edit forever through conversation. Every world you touch makes every future world richer.
 
-**Marble Muse** is a real-time, language-driven editing layer for Marble's gaussian splat worlds. You walk through a 3D world in your browser, click on things, talk to them, and they change. Remove objects, shift the atmosphere, relight the scene, extract assets into a reusable library, and composite elements across worlds — all through natural conversation with an AI that understands 3D space.
+**Inkling** is a real-time, language-driven editing layer for Marble's gaussian splat worlds. You walk through a 3D world in your browser, click on things, talk to them, and they change. Remove objects, shift the atmosphere, relight the scene, extract assets into a reusable library, and composite elements across worlds — all through natural conversation with an AI that understands 3D space.
 
 Built on **Spark** (World Labs' open-source gaussian splat renderer) and powered by **Gemini** for spatial reasoning, Marble Muse turns Marble's 6-minute generation cycle into a real-time creative loop.
 
