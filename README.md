@@ -167,7 +167,8 @@ npm install
 npm run dev
 ```
 
-Set `VITE_GEMINI_API_KEY` in `.env` for Gemini API access.
+Set `VITE_GEMINI_API_KEY` in `.env` for primary Gemini access.
+Optional failover: set `VITE_OPENAI_API_KEY` (and optionally `VITE_OPENAI_MODEL`, default `gpt-5.2`) to enable automatic fallback when Gemini is temporarily unavailable (for example HTTP 503 high demand).
 
 Place `.spz` files exported from Marble in `public/scenes/`.
 

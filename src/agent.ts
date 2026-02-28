@@ -3,6 +3,9 @@ import * as THREE from "three";
 import type { EditOperation, SDFShapeConfig, VoxelCell } from "./types";
 
 const GEMINI_MODEL = "gemini-3-flash-preview";
+const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
+const OPENAI_FALLBACK_MODEL =
+  String(import.meta.env.VITE_OPENAI_MODEL ?? "gpt-5.2").trim() || "gpt-5.2";
 const MAX_RETRIES = 1;
 const MAX_TOKENS = 4096;
 const MARKDOWN_JSON_REGEX = /```json?\s*([\s\S]*?)```/i;
@@ -336,71 +339,116 @@ export async function processCommand(
   if (!trimmedCommand) {
     throw new Error("[agent] ERROR: command is empty");
   }
-  if (!apiKey.trim()) {
-    throw new Error("[agent] ERROR: missing Gemini API key");
+  const geminiApiKey = apiKey.trim();
+  const openAIApiKey = readOpenAIApiKey();
+  if (!geminiApiKey && !openAIApiKey) {
+    throw new Error("[agent] ERROR: missing Gemini/OpenAI API key");
   }
 
-  let lastError: Error | null = null;
-  const ai = new GoogleGenAI({ apiKey });
   const secondaryScreenshotBase64 = pendingSecondaryScreenshotBase64;
   pendingSecondaryScreenshotBase64 = null;
   console.log(
-    `[agent] processCommand start command="${trimmedCommand}" click=${clickPosition ? formatVec3(clickPosition) : "null"} voxelChars=${voxelContext?.length ?? 0} manifestChars=${manifestSummary?.length ?? 0} screenshotBytes=${screenshotBase64?.length ?? 0} secondaryScreenshotBytes=${secondaryScreenshotBase64?.length ?? 0}`
+    `[agent] processCommand start command="${trimmedCommand}" click=${clickPosition ? formatVec3(clickPosition) : "null"} voxelChars=${voxelContext?.length ?? 0} manifestChars=${manifestSummary?.length ?? 0} screenshotBytes=${screenshotBase64?.length ?? 0} secondaryScreenshotBytes=${secondaryScreenshotBase64?.length ?? 0} geminiKey=${Boolean(geminiApiKey)} openaiKey=${Boolean(openAIApiKey)}`
   );
 
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
-    const retrying = attempt > 0;
+  let lastError: Error | null = null;
+
+  if (geminiApiKey) {
+    const ai = new GoogleGenAI({ apiKey: geminiApiKey });
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
+      const retrying = attempt > 0;
+      try {
+        const userText = buildUserText(
+          trimmedCommand,
+          clickPosition,
+          voxelContext,
+          manifestSummary,
+          retrying,
+          Boolean(secondaryScreenshotBase64)
+        );
+        const contents = buildContents(
+          userText,
+          screenshotBase64,
+          secondaryScreenshotBase64
+        );
+        const imageParts =
+          contents[0]?.parts.filter((part) => "inlineData" in part).length ?? 0;
+        console.log(
+          `[agent] Gemini request attempt=${attempt + 1}/${MAX_RETRIES + 1} model=${GEMINI_MODEL} imageParts=${imageParts} promptChars=${userText.length}`
+        );
+
+        const response = await ai.models.generateContent({
+          model: GEMINI_MODEL,
+          contents,
+          config: {
+            temperature: 0,
+            maxOutputTokens: MAX_TOKENS,
+            systemInstruction: SYSTEM_PROMPT,
+          },
+        });
+        console.log(
+          `[agent] Gemini response received candidates=${response.candidates?.length ?? 0} textChars=${response.text?.length ?? 0}`
+        );
+
+        const text = extractTextFromGeminiResponse(response);
+        console.log(`[agent] Extracted response text chars=${text.length}`);
+        const operations = parseAndValidateOperations(text, trimmedCommand);
+
+        console.log(`[agent] Command: "${trimmedCommand}" → ${operations.length} operations`);
+        return operations;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        lastError = new Error(message);
+
+        if (attempt < MAX_RETRIES) {
+          console.warn(
+            `[agent] Retry ${attempt + 1}/${MAX_RETRIES} for command "${trimmedCommand}" due to: ${message}`
+          );
+          continue;
+        }
+
+        console.error(`[agent] Gemini error after retries: ${message}`);
+      }
+    }
+  } else {
+    console.warn("[agent] Gemini key missing; skipping Gemini and using OpenAI fallback");
+  }
+
+  const shouldFallback = shouldUseOpenAIFallback(geminiApiKey, lastError);
+  if (openAIApiKey && shouldFallback) {
+    console.warn(
+      `[agent] Falling back to OpenAI model=${OPENAI_FALLBACK_MODEL} after Gemini failure`
+    );
     try {
       const userText = buildUserText(
         trimmedCommand,
         clickPosition,
         voxelContext,
         manifestSummary,
-        retrying,
+        false,
         Boolean(secondaryScreenshotBase64)
       );
-      const contents = buildContents(
+      const text = await requestOpenAIText(
+        openAIApiKey,
         userText,
         screenshotBase64,
         secondaryScreenshotBase64
       );
-      const imageParts = contents[0]?.parts.filter((part) => "inlineData" in part).length ?? 0;
-      console.log(
-        `[agent] Gemini request attempt=${attempt + 1}/${MAX_RETRIES + 1} model=${GEMINI_MODEL} imageParts=${imageParts} promptChars=${userText.length}`
-      );
-
-      const response = await ai.models.generateContent({
-        model: GEMINI_MODEL,
-        contents,
-        config: {
-          temperature: 0,
-          maxOutputTokens: MAX_TOKENS,
-          systemInstruction: SYSTEM_PROMPT,
-        },
-      });
-      console.log(
-        `[agent] Gemini response received candidates=${response.candidates?.length ?? 0} textChars=${response.text?.length ?? 0}`
-      );
-
-      const text = extractTextFromGeminiResponse(response);
-      console.log(`[agent] Extracted response text chars=${text.length}`);
       const operations = parseAndValidateOperations(text, trimmedCommand);
 
-      console.log(`[agent] Command: "${trimmedCommand}" → ${operations.length} operations`);
+      console.log(
+        `[agent] Command: "${trimmedCommand}" → ${operations.length} operations (OpenAI fallback)`
+      );
       return operations;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       lastError = new Error(message);
-
-      if (attempt < MAX_RETRIES) {
-        console.warn(
-          `[agent] Retry ${attempt + 1}/${MAX_RETRIES} for command "${trimmedCommand}" due to: ${message}`
-        );
-        continue;
-      }
-
-      console.error(`[agent] ERROR: ${message}`);
+      console.error(`[agent] OpenAI fallback failed: ${message}`);
     }
+  } else if (openAIApiKey && geminiApiKey && lastError) {
+    console.warn(
+      `[agent] OpenAI fallback skipped: non-transient Gemini failure (${lastError.message})`
+    );
   }
 
   throw lastError ?? new Error("[agent] ERROR: unknown processing failure");
@@ -504,6 +552,159 @@ export function setSecondaryScreenshotForNextCommand(
     `[agent] setSecondaryScreenshotForNextCommand bytes=${pendingSecondaryScreenshotBase64?.length ?? 0}`
   );
 }
+
+async function requestOpenAIText(
+  apiKey: string,
+  userText: string,
+  screenshotBase64: string | null,
+  secondaryScreenshotBase64: string | null
+): Promise<string> {
+  const content: Array<
+    | { type: "input_text"; text: string }
+    | { type: "input_image"; image_url: string }
+  > = [];
+
+  const normalizedImage = normalizeScreenshotBase64(screenshotBase64);
+  if (normalizedImage) {
+    content.push({
+      type: "input_image",
+      image_url: `data:image/png;base64,${normalizedImage}`,
+    });
+  }
+
+  const normalizedSecondaryImage = normalizeScreenshotBase64(secondaryScreenshotBase64);
+  if (normalizedSecondaryImage) {
+    content.push({
+      type: "input_image",
+      image_url: `data:image/png;base64,${normalizedSecondaryImage}`,
+    });
+  }
+
+  content.push({
+    type: "input_text",
+    text: userText,
+  });
+
+  const imageParts = content.filter((item) => item.type === "input_image").length;
+  console.log(
+    `[agent] OpenAI request model=${OPENAI_FALLBACK_MODEL} imageParts=${imageParts} promptChars=${userText.length}`
+  );
+
+  const response = await fetch(OPENAI_RESPONSES_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: OPENAI_FALLBACK_MODEL,
+      instructions: SYSTEM_PROMPT,
+      temperature: 0,
+      max_output_tokens: MAX_TOKENS,
+      input: [
+        {
+          role: "user",
+          content,
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await extractOpenAIError(response);
+    throw new Error(
+      `OpenAI request failed (${response.status} ${response.statusText}): ${errorText}`
+    );
+  }
+
+  const payload = (await response.json()) as OpenAIResponsePayload;
+  const text = extractTextFromOpenAIResponse(payload);
+  console.log(`[agent] OpenAI response text chars=${text.length}`);
+  return text;
+}
+
+function extractTextFromOpenAIResponse(payload: OpenAIResponsePayload): string {
+  if (typeof payload.output_text === "string" && payload.output_text.trim()) {
+    return payload.output_text.trim();
+  }
+
+  const textParts: string[] = [];
+  for (const item of payload.output ?? []) {
+    if (!item || item.type !== "message" || !Array.isArray(item.content)) {
+      continue;
+    }
+
+    for (const part of item.content) {
+      if (
+        (part.type === "output_text" || part.type === "text") &&
+        typeof part.text === "string" &&
+        part.text.trim()
+      ) {
+        textParts.push(part.text.trim());
+      }
+    }
+  }
+
+  const joined = textParts.join("\n").trim();
+  if (!joined) {
+    throw new Error("OpenAI response contained no text content.");
+  }
+  return joined;
+}
+
+async function extractOpenAIError(response: Response): Promise<string> {
+  const raw = await response.text();
+  if (!raw) {
+    return "No error body";
+  }
+  try {
+    const parsed = JSON.parse(raw) as {
+      error?: { message?: string; code?: string; type?: string };
+    };
+    if (typeof parsed.error?.message === "string" && parsed.error.message.trim()) {
+      return parsed.error.message.trim();
+    }
+  } catch {
+    // Use raw text if JSON parse fails.
+  }
+  return raw.slice(0, 400);
+}
+
+function readOpenAIApiKey(): string {
+  return String(import.meta.env.VITE_OPENAI_API_KEY ?? "").trim();
+}
+
+function shouldUseOpenAIFallback(
+  geminiApiKey: string,
+  lastError: Error | null
+): boolean {
+  if (!geminiApiKey) {
+    return true;
+  }
+  if (!lastError) {
+    return false;
+  }
+
+  const message = lastError.message.toLowerCase();
+  return (
+    message.includes("503") ||
+    message.includes("status\":\"unavailable\"") ||
+    message.includes("high demand") ||
+    message.includes("429") ||
+    message.includes("rate limit") ||
+    message.includes("timeout") ||
+    message.includes("network") ||
+    message.includes("fetch failed")
+  );
+}
+
+type OpenAIResponsePayload = {
+  output_text?: string;
+  output?: Array<{
+    type?: string;
+    content?: Array<{ type?: string; text?: string }>;
+  }>;
+};
 
 function extractTextFromGeminiResponse(payload: GenerateContentResponse): string {
   if (typeof payload.text === "string" && payload.text.trim()) {
