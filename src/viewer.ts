@@ -152,12 +152,21 @@ function setupKeyboardMovement() {
   }
 
   window.addEventListener("keydown", (event) => {
+    if (isTextEntryTarget(event.target)) {
+      return;
+    }
     if (event.repeat) return;
     pressedKeys.add(event.key.toLowerCase());
   });
 
   window.addEventListener("keyup", (event) => {
     pressedKeys.delete(event.key.toLowerCase());
+  });
+
+  window.addEventListener("focusin", (event) => {
+    if (isTextEntryTarget(event.target)) {
+      pressedKeys.clear();
+    }
   });
 
   window.addEventListener("blur", () => {
@@ -411,6 +420,26 @@ function onResize() {
 
 function nowMs(): number {
   return typeof performance !== "undefined" ? performance.now() : Date.now();
+}
+
+function isTextEntryTarget(target: EventTarget | null): boolean {
+  const element = target instanceof HTMLElement ? target : null;
+  if (!element) {
+    return false;
+  }
+  if (element.isContentEditable) {
+    return true;
+  }
+  if (
+    element instanceof HTMLInputElement ||
+    element instanceof HTMLTextAreaElement ||
+    element instanceof HTMLSelectElement
+  ) {
+    return true;
+  }
+  return Boolean(
+    element.closest("input, textarea, select, [contenteditable='true']")
+  );
 }
 
 export function getScreenshot(): string {
