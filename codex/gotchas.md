@@ -43,3 +43,7 @@
 17. **Spatial-index Y-crop can collapse on tiny/flat scenes.** Cropping 10% off top and bottom of the Y range may produce an invalid box when the source height is near zero. Detect this and fall back to uncropped bounds instead of building an empty/broken grid.
 
 18. **Keep density comparable across cells.** If density is computed from occupied extents (`worldBounds`) instead of nominal voxel volume, sparse cells with tight point clusters look artificially dense. Use nominal grid-cell volume for stable cross-cell comparisons.
+
+19. **THREE.Color.getHSL() returns hue 0-1, not 0-360.** When using hue for classification heuristics, multiply by 360 to get degrees. The `scene-manifest.ts` color classifier works in degree-space (0-360) after conversion.
+
+20. **Scene-manifest heuristic labels are hints, not ground truth.** The color/height classification in `scene-manifest.ts` (T10 MVP) uses simple rules (green=vegetation, grey+low=ground, etc.). Indoor scenes like libraries will mostly get "structure" and "warm_surface" labels. The labels are context for the LLM agent, not reliable identifiers. Full Claude Vision analysis (T15) is needed for accurate labeling.

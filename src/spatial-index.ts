@@ -77,10 +77,11 @@ export function computeCroppedBounds(
 export function worldPosToGridCoord(
   worldPos: THREE.Vector3,
   gridBounds: THREE.Box3,
-  resolution: [number, number, number]
+  resolution: [number, number, number],
+  clamp: boolean = false
 ): [number, number, number] | null {
   if (!gridBounds.containsPoint(worldPos)) {
-    return null;
+    if (!clamp) return null;
   }
 
   const size = new THREE.Vector3();
@@ -196,18 +197,50 @@ export function getCellAtWorldPos(
   grid: SpatialGrid,
   pos: THREE.Vector3
 ): VoxelCell | null {
+  // Try exact match first
   const coord = worldPosToGridCoord(pos, grid.worldBounds, grid.resolution);
-  if (!coord) {
-    return null;
+  if (coord) {
+    const cell = grid.cells.get(gridKey(coord[0], coord[1], coord[2]));
+    if (cell) return cell;
   }
 
-  return grid.cells.get(gridKey(coord[0], coord[1], coord[2])) ?? null;
+  // If outside bounds or cell empty, clamp to nearest occupied cell
+  const clamped = worldPosToGridCoord(pos, grid.worldBounds, grid.resolution, true);
+  if (!clamped) return null;
+
+  const cell = grid.cells.get(gridKey(clamped[0], clamped[1], clamped[2]));
+  if (cell) return cell;
+
+  // Clamped cell is unoccupied — search neighbors in expanding radius
+  for (let r = 1; r <= 5; r++) {
+    const [cx, cy, cz] = clamped;
+    const [rx, ry, rz] = grid.resolution;
+    let nearest: VoxelCell | null = null;
+    let bestDist = Infinity;
+    for (let x = Math.max(0, cx - r); x <= Math.min(rx - 1, cx + r); x++) {
+      for (let y = Math.max(0, cy - r); y <= Math.min(ry - 1, cy + r); y++) {
+        for (let z = Math.max(0, cz - r); z <= Math.min(rz - 1, cz + r); z++) {
+          const neighbor = grid.cells.get(gridKey(x, y, z));
+          if (neighbor) {
+            const dist = neighbor.worldCenter.distanceToSquared(pos);
+            if (dist < bestDist) {
+              bestDist = dist;
+              nearest = neighbor;
+            }
+          }
+        }
+      }
+    }
+    if (nearest) return nearest;
+  }
+
+  return null;
 }
 
 export function getNeighborCells(
   grid: SpatialGrid,
   cell: VoxelCell,
-  radius: number
+  radius: number = 1
 ): VoxelCell[] {
   const out: VoxelCell[] = [];
   const [cx, cy, cz] = cell.gridPos;
@@ -230,37 +263,43 @@ export function getNeighborCells(
 
 export function serializeSpatialGridForLLM(
   grid: SpatialGrid,
-  options: { maxCells?: number } = {}
+  options: { maxCells?: number; minSplats?: number } = {}
 ): string {
-  let cells = Array.from(grid.cells.entries());
+  const minSplats = options.minSplats ?? 10;
+  const maxCells = options.maxCells ?? 600;
+  let cells = Array.from(grid.cells.entries()).filter(
+    ([, cell]) => cell.splatCount >= minSplats
+  );
 
-  if (typeof options.maxCells === "number" && options.maxCells >= 0 && cells.length > options.maxCells) {
+  if (cells.length > maxCells) {
     cells = cells
       .sort((a, b) => b[1].splatCount - a[1].splatCount)
-      .slice(0, options.maxCells);
-    console.log(`[spatial] serializeSpatialGridForLLM truncated to ${cells.length} cells`);
+      .slice(0, maxCells);
+    console.log(`[spatial] serializeSpatialGridForLLM truncated to ${cells.length} cells (from ${grid.cells.size})`);
   }
+
+  const r2 = (n: number) => Math.round(n * 100) / 100;
 
   const payload = {
     resolution: grid.resolution,
     worldBounds: {
-      min: grid.worldBounds.min.toArray(),
-      max: grid.worldBounds.max.toArray(),
+      min: grid.worldBounds.min.toArray().map(r2),
+      max: grid.worldBounds.max.toArray().map(r2),
     },
-    cellSize: grid.cellSize.toArray(),
-    cells: cells.map(([key, cell]) => ({
-      key,
-      gridPos: cell.gridPos,
-      worldCenter: cell.worldCenter.toArray(),
-      worldBounds: {
-        min: cell.worldBounds.min.toArray(),
-        max: cell.worldBounds.max.toArray(),
-      },
-      splatCount: cell.splatCount,
-      avgColor: [cell.avgColor.r, cell.avgColor.g, cell.avgColor.b],
-      colorVariance: cell.colorVariance,
-      density: cell.density,
-    })),
+    cellSize: grid.cellSize.toArray().map(r2),
+    cells: cells.map(([, cell]) => {
+      const bSize = new THREE.Vector3();
+      cell.worldBounds.getSize(bSize);
+      return {
+        g: cell.gridPos,
+        c: cell.worldCenter.toArray().map(r2),
+        d: [r2(bSize.x), r2(bSize.y), r2(bSize.z)],
+        n: cell.splatCount,
+        col: "#" + cell.avgColor.getHexString(),
+        cv: r2(cell.colorVariance),
+        den: r2(cell.density),
+      };
+    }),
   };
 
   return JSON.stringify(payload);
