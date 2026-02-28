@@ -108,6 +108,35 @@ describe("asset-library extraction", () => {
     expect(boxEntry?.splatCount).toBe(27);
   });
 
+  it("supports cylinder and capsule extraction shapes", async () => {
+    const { extractAssetFromDeleteOperation } = await import("../src/asset-library");
+
+    const cylinderOp = deleteOp({
+      type: "CYLINDER",
+      position: [0, 0, 0],
+      scale: [1, 1, 1],
+    });
+
+    const cylinderMesh = makeMesh([
+      ...repeatPoint(new THREE.Vector3(0.6, 0.8, 0.4), 20),
+      ...repeatPoint(new THREE.Vector3(1.6, 0, 0), 6),
+    ]);
+    const cylinderEntry = extractAssetFromDeleteOperation(cylinderOp, cylinderMesh, "scene-b");
+    expect(cylinderEntry?.splatCount).toBe(20);
+
+    const capsuleOp = deleteOp({
+      type: "CAPSULE",
+      position: [0, 0, 0],
+      scale: [0.9, 1.4, 0.9],
+    });
+    const capsuleMesh = makeMesh([
+      ...repeatPoint(new THREE.Vector3(0.2, 1.1, 0.1), 18),
+      ...repeatPoint(new THREE.Vector3(1.6, 1.6, 0), 6),
+    ]);
+    const capsuleEntry = extractAssetFromDeleteOperation(capsuleOp, capsuleMesh, "scene-b");
+    expect(capsuleEntry?.splatCount).toBe(18);
+  });
+
   it("normalizes extracted positions around centroid and keeps world bounds", async () => {
     const { extractAssetFromDeleteOperation } = await import("../src/asset-library");
 

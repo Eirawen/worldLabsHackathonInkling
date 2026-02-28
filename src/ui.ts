@@ -2,6 +2,7 @@ import type { SplatMesh } from "@sparkjsdev/spark";
 import type * as THREE from "three";
 import {
   buildClickContext,
+  setProviderPreference,
   setSecondaryScreenshotForNextCommand,
   type processCommand as processCommandFn,
 } from "./agent";
@@ -38,7 +39,11 @@ const ENABLE_CLICK_SELECTION_HINTS =
   String(import.meta.env.VITE_ENABLE_CLICK_SELECTION_HINTS ?? "true").toLowerCase() !==
   "false";
 const CROP_SIZE_PX = 320;
-const MIN_SELECTION_CONFIDENCE = 0.35;
+const MIN_SELECTION_CONFIDENCE = 0.15;
+const DEFAULT_PROVIDER =
+  String(import.meta.env.VITE_DEFAULT_LLM_PROVIDER ?? "gemini").toLowerCase() === "openai"
+    ? "openai"
+    : "gemini";
 
 export function initUI(deps: UIDependencies): void {
   if (initialized) {
@@ -76,10 +81,15 @@ export function initUI(deps: UIDependencies): void {
   undoButton.type = "button";
   undoButton.textContent = "↩";
 
+  const providerButton = document.createElement("button");
+  providerButton.id = "muse-provider-btn";
+  providerButton.type = "button";
+  providerButton.textContent = "Gemini";
+
   const status = document.createElement("div");
   status.id = "muse-status";
 
-  inputRow.append(input, sendButton, undoButton);
+  inputRow.append(input, sendButton, undoButton, providerButton);
   container.append(messages, inputRow, status);
   document.body.append(container);
 
@@ -104,6 +114,9 @@ export function initUI(deps: UIDependencies): void {
   document.body.append(toastContainer);
 
   let selectedAssetId: string | null = null;
+  let provider: "gemini" | "openai" = DEFAULT_PROVIDER;
+  setProviderPreference(provider);
+  providerButton.textContent = provider === "gemini" ? "Gemini" : "OpenAI";
 
   setStatus(status, "Click an object, then type a command");
   setLibraryStatus(libraryStatus, "No asset selected");
@@ -212,6 +225,7 @@ export function initUI(deps: UIDependencies): void {
     input.disabled = busy;
     sendButton.disabled = busy;
     undoButton.disabled = busy;
+    providerButton.disabled = false;
     if (!busy) {
       input.focus();
     }
@@ -290,6 +304,13 @@ export function initUI(deps: UIDependencies): void {
           "system",
           `Saved ${createdCount} asset${createdCount === 1 ? "" : "s"} to library.`
         );
+      } else if (operations.some((op) => op.action === "delete")) {
+        showToast("Delete applied, but asset capture was empty", 3200);
+        appendMessage(
+          messages,
+          "system",
+          "Delete applied, but no reusable asset was captured from that region."
+        );
       }
 
       setStatus(status, "Ready");
@@ -327,6 +348,14 @@ export function initUI(deps: UIDependencies): void {
     } else {
       showToast("No edits to undo", 1800);
     }
+  });
+
+  providerButton.addEventListener("click", () => {
+    provider = provider === "gemini" ? "openai" : "gemini";
+    setProviderPreference(provider);
+    providerButton.textContent = provider === "gemini" ? "Gemini" : "OpenAI";
+    showToast(`Provider: ${providerButton.textContent}`, 1400);
+    appendMessage(messages, "system", `LLM provider set to ${providerButton.textContent}.`);
   });
 
   window.addEventListener("keydown", (event) => {

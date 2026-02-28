@@ -11,7 +11,7 @@ type CapturedSplat = {
 };
 
 type CompiledShape = {
-  type: "SPHERE" | "ELLIPSOID" | "BOX";
+  type: "SPHERE" | "ELLIPSOID" | "BOX" | "CYLINDER" | "CAPSULE";
   position: THREE.Vector3;
   inverseRotation: THREE.Quaternion;
   radius: number;
@@ -20,7 +20,7 @@ type CompiledShape = {
 
 const assets: AssetEntry[] = [];
 
-const MIN_ASSET_SPLATS = 24;
+const MIN_ASSET_SPLATS = 8;
 const MAX_EXTRACTED_SPLATS = 120_000;
 const MIN_OPACITY = 0.1;
 const MAX_COLOR_DISTANCE = 0.52;
@@ -40,7 +40,11 @@ export function extractAssetFromDeleteOperation(
   const startMs = nowMs();
   const compiledShapes = compileSupportedShapes(op.shapes);
   if (compiledShapes.length === 0) {
-    console.warn("[asset-library] No supported delete shapes found for extraction");
+    console.warn(
+      `[asset-library] No supported delete shapes found for extraction. opShapes=${op.shapes
+        .map((shape) => shape.type)
+        .join(",")}`
+    );
     return null;
   }
 
@@ -70,7 +74,7 @@ export function extractAssetFromDeleteOperation(
 
   if (candidates.length < MIN_ASSET_SPLATS) {
     console.log(
-      `[asset-library] Extraction skipped (too few candidates): inside=${insideRegionCount}, kept=${candidates.length}`
+      `[asset-library] Extraction skipped (too few candidates): inside=${insideRegionCount}, kept=${candidates.length}, min=${MIN_ASSET_SPLATS}`
     );
     return null;
   }
@@ -159,7 +163,13 @@ function compileSupportedShapes(shapes: SDFShapeConfig[]): CompiledShape[] {
   const compiled: CompiledShape[] = [];
 
   for (const shape of shapes) {
-    if (shape.type !== "SPHERE" && shape.type !== "ELLIPSOID" && shape.type !== "BOX") {
+    if (
+      shape.type !== "SPHERE" &&
+      shape.type !== "ELLIPSOID" &&
+      shape.type !== "BOX" &&
+      shape.type !== "CYLINDER" &&
+      shape.type !== "CAPSULE"
+    ) {
       console.warn(`[asset-library] Skipping unsupported extraction shape type=${shape.type}`);
       continue;
     }
@@ -231,6 +241,21 @@ function pointInsideCompiledShape(point: THREE.Vector3, shape: CompiledShape): b
         Math.abs(tmpLocal.y) <= Math.max(shape.scale.y, EPSILON) &&
         Math.abs(tmpLocal.z) <= Math.max(shape.scale.z, EPSILON)
       );
+    }
+    case "CYLINDER": {
+      const radius = Math.max(shape.radius, shape.scale.x, shape.scale.z, EPSILON);
+      const halfHeight = Math.max(shape.scale.y, EPSILON);
+      const radial = Math.sqrt(tmpLocal.x * tmpLocal.x + tmpLocal.z * tmpLocal.z);
+      return radial <= radius && Math.abs(tmpLocal.y) <= halfHeight;
+    }
+    case "CAPSULE": {
+      const radius = Math.max(shape.radius, shape.scale.x, shape.scale.z, EPSILON);
+      const halfSegment = Math.max(shape.scale.y - radius, 0);
+      const closestY = clamp(tmpLocal.y, -halfSegment, halfSegment);
+      const dx = tmpLocal.x;
+      const dy = tmpLocal.y - closestY;
+      const dz = tmpLocal.z;
+      return dx * dx + dy * dy + dz * dz <= radius * radius;
     }
     default:
       return false;
@@ -318,4 +343,8 @@ function buildPlaceholderThumbnail(label: string): string {
 
 function nowMs(): number {
   return typeof performance !== "undefined" ? performance.now() : Date.now();
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
