@@ -30,3 +30,151 @@ html, body {
   pointer-events: none;
   z-index: 10;
 }
+
+#muse-chat-container {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 12px 16px;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(6px);
+  z-index: 100;
+}
+
+#muse-messages {
+  max-height: 120px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.muse-msg {
+  margin-bottom: 3px;
+  white-space: pre-wrap;
+}
+
+.muse-msg-user {
+  color: #d9f0ff;
+}
+
+.muse-msg-assistant {
+  color: #d8ffe0;
+}
+
+.muse-msg-system {
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.muse-msg-error {
+  color: #ffb5b5;
+}
+
+#muse-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+#muse-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-size: 14px;
+}
+
+#muse-input::placeholder {
+  color: rgba(255, 255, 255, 0.56);
+}
+
+#muse-send-btn,
+#muse-undo-btn {
+  border: 0;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+  padding: 10px 12px;
+  min-width: 40px;
+  cursor: pointer;
+  transition: background 0.16s ease;
+}
+
+#muse-send-btn:hover,
+#muse-undo-btn:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+#muse-send-btn:disabled,
+#muse-undo-btn:disabled,
+#muse-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+#muse-status {
+  margin-top: 6px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+#muse-toast-container {
+  position: fixed;
+  left: 16px;
+  bottom: 112px;
+  z-index: 120;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.muse-toast {
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.muse-toast.fade-out {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+@media (max-width: 768px) {
+  #muse-chat-container {
+    padding: 10px 10px 12px;
+  }
+
+  #muse-messages {
+    max-height: 100px;
+  }
+
+  #muse-input {
+    font-size: 13px;
+    padding: 9px 10px;
+  }
+
+  #muse-send-btn,
+  #muse-undo-btn {
+    padding: 9px 10px;
+    min-width: 36px;
+  }
+
+  #muse-toast-container {
+    left: 10px;
+    right: 10px;
+    bottom: 108px;
+  }
+}
