@@ -1,6 +1,11 @@
 import type { SplatMesh } from "@sparkjsdev/spark";
 import type * as THREE from "three";
-import { buildClickContext, type processCommand as processCommandFn } from "./agent";
+import {
+  buildClickContext,
+  setSecondaryScreenshotForNextCommand,
+  type processCommand as processCommandFn,
+} from "./agent";
+import { buildLocalSelection, formatSelectionHint } from "./click-selection";
 import type { executeOperations as executeOperationsFn, undoLastEdit as undoLastEditFn } from "./executor";
 import { getManifestJSON } from "./scene-manifest";
 import { getCellAtWorldPos, getNeighborCells } from "./spatial-index";
@@ -16,6 +21,7 @@ export interface UIDependencies {
   undoLastEdit: UndoLastEdit;
   getSplatMesh: () => SplatMesh;
   getScreenshot: () => string;
+  getScreenshotCropAroundPoint?: (point: THREE.Vector3, sizePx?: number) => string | null;
   getGrid: () => SpatialGrid | null;
   getManifest: () => SceneManifest | null;
   getLastClickPoint: () => THREE.Vector3 | null;
@@ -28,6 +34,11 @@ export interface UIDependencies {
 
 let toastContainer: HTMLDivElement | null = null;
 let initialized = false;
+const ENABLE_CLICK_SELECTION_HINTS =
+  String(import.meta.env.VITE_ENABLE_CLICK_SELECTION_HINTS ?? "true").toLowerCase() !==
+  "false";
+const CROP_SIZE_PX = 320;
+const MIN_SELECTION_CONFIDENCE = 0.35;
 
 export function initUI(deps: UIDependencies): void {
   if (initialized) {
@@ -36,6 +47,9 @@ export function initUI(deps: UIDependencies): void {
   }
   initialized = true;
   console.log("[ui] Initializing chat + library UI");
+  console.log(
+    `[ui] Selection config: hintsEnabled=${ENABLE_CLICK_SELECTION_HINTS} minConfidence=${MIN_SELECTION_CONFIDENCE.toFixed(2)} cropPx=${CROP_SIZE_PX}`
+  );
 
   const container = document.createElement("div");
   container.id = "muse-chat-container";
@@ -223,14 +237,21 @@ export function initUI(deps: UIDependencies): void {
       const manifest = deps.getManifest();
       const splatMesh = deps.getSplatMesh();
       const screenshot = normalizeScreenshotDataUrl(deps.getScreenshot());
+      const screenshotCrop =
+        clickPoint && deps.getScreenshotCropAroundPoint
+          ? normalizeScreenshotDataUrl(
+              deps.getScreenshotCropAroundPoint(clickPoint, CROP_SIZE_PX) ?? ""
+            )
+          : "";
       const apiKey = readGeminiApiKey();
 
       console.log(
-        `[ui] Context: click=${formatVec3OrNull(clickPoint)} grid=${grid ? "ready" : "null"} manifest=${manifest ? "ready" : "null"} screenshotBytes=${screenshot.length} apiKeyPresent=${apiKey.length > 0}`
+        `[ui] Context: click=${formatVec3OrNull(clickPoint)} grid=${grid ? "ready" : "null"} manifest=${manifest ? "ready" : "null"} screenshotBytes=${screenshot.length} cropBytes=${screenshotCrop.length} apiKeyPresent=${apiKey.length > 0}`
       );
 
       const voxelContext = buildVoxelContext(grid, clickPoint);
       const manifestSummary = manifest ? getManifestJSON(manifest) : null;
+      setSecondaryScreenshotForNextCommand(screenshotCrop || null);
       console.log(
         `[ui] Prompt payload: voxelContextChars=${voxelContext?.length ?? 0} manifestChars=${manifestSummary?.length ?? 0}`
       );
@@ -397,7 +418,30 @@ function buildVoxelContext(
   console.log(
     `[ui] buildVoxelContext: cell=${cell ? cell.gridPos.join(",") : "none"} neighbors=${neighbors.length}`
   );
-  return buildClickContext(clickPoint, cell, neighbors);
+  const baseContext = buildClickContext(clickPoint, cell, neighbors);
+
+  if (!ENABLE_CLICK_SELECTION_HINTS) {
+    console.log("[ui] Deterministic selection hints disabled via feature flag");
+    return baseContext;
+  }
+
+  const selection = buildLocalSelection(grid, clickPoint);
+  if (!selection) {
+    console.log("[ui] Deterministic selection unavailable; using base context");
+    return baseContext;
+  }
+  if (selection.confidence < MIN_SELECTION_CONFIDENCE) {
+    console.log(
+      `[ui] Deterministic selection confidence too low (${selection.confidence.toFixed(3)}); fallback to base context`
+    );
+    return baseContext;
+  }
+
+  const hint = formatSelectionHint(selection);
+  console.log(
+    `[ui] Deterministic selection included confidence=${selection.confidence.toFixed(3)} cells=${selection.clusterCellKeys.length}`
+  );
+  return `${baseContext}\n\n${hint}`;
 }
 
 function normalizeScreenshotDataUrl(dataUrl: string): string {
