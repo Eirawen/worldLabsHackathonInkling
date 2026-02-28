@@ -75,3 +75,22 @@ export interface AssetEntry {
   bounds: THREE.Box3;
   splatCount: number;
 }
+
+export interface WorldNodeConfig {
+  id: string;
+  label: string;
+  sceneUrl: string;
+  position: [number, number];
+  description?: string;
+}
+
+export interface WorldEdgeConfig {
+  from: string;
+  to: string;
+}
+
+export interface WorldCatalog {
+  nodes: WorldNodeConfig[];
+  edges: WorldEdgeConfig[];
+  defaultWorldId?: string;
+}

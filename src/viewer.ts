@@ -23,6 +23,13 @@ export interface ViewerContext {
   boundsSize: THREE.Vector3;
 }
 
+export interface WorldLoadResult {
+  splatMesh: SplatMesh;
+  bounds: THREE.Box3;
+  boundsCenter: THREE.Vector3;
+  boundsSize: THREE.Vector3;
+}
+
 type ClickCallback = (point: THREE.Vector3) => void;
 const clickCallbacks: ClickCallback[] = [];
 let indicator: THREE.Mesh | null = null;
@@ -93,25 +100,8 @@ export async function initViewer(
   };
   canvas.addEventListener("contextmenu", (event) => event.preventDefault());
 
-  console.log("[viewer] Loading scene:", sceneUrl);
-  splatMesh = new SplatMesh({ url: sceneUrl });
-  splatMesh.quaternion.set(1, 0, 0, 0); // OpenCV → OpenGL coordinate fix
-  scene.add(splatMesh);
-
-  await splatMesh.initialized;
-  console.log("[viewer] Scene loaded and initialized");
-
-  const bounds = splatMesh.getBoundingBox();
-  const boundsCenter = new THREE.Vector3();
-  const boundsSize = new THREE.Vector3();
-  bounds.getCenter(boundsCenter);
-  bounds.getSize(boundsSize);
-  console.log("[viewer] Bounding box min:", bounds.min.toArray());
-  console.log("[viewer] Bounding box max:", bounds.max.toArray());
-  console.log("[viewer] Bounding box center:", boundsCenter.toArray());
-  console.log("[viewer] Bounding box size:", boundsSize.toArray());
-
-  fitCameraToBounds(bounds, boundsCenter, boundsSize);
+  const initialWorld = await loadWorld(sceneUrl);
+  const { bounds, boundsCenter, boundsSize } = initialWorld;
   setupRaycasting();
   setupKeyboardMovement();
   setupFreeLook();
@@ -144,6 +134,48 @@ export async function initViewer(
     boundsCenter,
     boundsSize,
   };
+}
+
+export async function loadWorld(sceneUrl: string): Promise<WorldLoadResult> {
+  disposeCurrentWorld();
+
+  console.log("[viewer] Loading scene:", sceneUrl);
+  const nextMesh = new SplatMesh({ url: sceneUrl });
+  nextMesh.quaternion.set(1, 0, 0, 0); // OpenCV → OpenGL coordinate fix
+  scene.add(nextMesh);
+  await nextMesh.initialized;
+  splatMesh = nextMesh;
+
+  console.log("[viewer] Scene loaded and initialized");
+  const bounds = splatMesh.getBoundingBox();
+  const boundsCenter = new THREE.Vector3();
+  const boundsSize = new THREE.Vector3();
+  bounds.getCenter(boundsCenter);
+  bounds.getSize(boundsSize);
+  console.log("[viewer] Bounding box min:", bounds.min.toArray());
+  console.log("[viewer] Bounding box max:", bounds.max.toArray());
+  console.log("[viewer] Bounding box center:", boundsCenter.toArray());
+  console.log("[viewer] Bounding box size:", boundsSize.toArray());
+
+  fitCameraToBounds(bounds, boundsCenter, boundsSize);
+  return { splatMesh, bounds, boundsCenter, boundsSize };
+}
+
+export function disposeCurrentWorld(): void {
+  if (!splatMesh) {
+    return;
+  }
+
+  clearClickIndicator();
+  scene.remove(splatMesh);
+  const disposable = splatMesh as unknown as { dispose?: () => void };
+  if (typeof disposable.dispose === "function") {
+    disposable.dispose();
+  }
+}
+
+export function getCurrentSplatMesh(): SplatMesh {
+  return splatMesh;
 }
 
 function setupKeyboardMovement() {

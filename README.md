@@ -60,6 +60,7 @@ No regeneration. No waiting. 60fps in the browser.
 6. **Execute** — JSON parsed into Spark `SplatEdit` + `SplatEditSdf` objects (spheres, boxes, cones, planes). Applied on the GPU in real-time at 60fps
 7. **Extract** — On delete operations, splats in the affected region are simultaneously extracted via `forEachSplat()`, filtered (by color coherence, density, opacity), normalized, and saved as reusable `PackedSplats` assets in the library
 8. **Reuse** — Assets from the library can be placed into any scene via click-to-place + `pushSplat()`
+9. **Swap Worlds** — Press `Esc` to open the world hub, pick another world node, and keep using the same extracted asset library across worlds
 
 ### Edit Operations (via Spark SplatEdit SDF System)
 
@@ -107,6 +108,7 @@ marble-muse/
 │   ├── spatial-index.ts    # Voxel grid construction and querying
 │   ├── scene-manifest.ts   # Scene understanding via Gemini vision
 │   ├── agent.ts            # Natural language → SplatEdit JSON pipeline
+│   ├── world-catalog.ts    # World manifest loader/validator for world hub
 │   ├── executor.ts         # JSON → Spark SplatEdit/SplatEditSdf objects
 │   ├── asset-library.ts    # Extraction, filtering, storage, placement
 │   ├── ui.ts               # Chat panel, library sidebar, selection highlights
@@ -171,6 +173,7 @@ Set `VITE_GEMINI_API_KEY` in `.env` for primary Gemini access.
 Optional failover: set `VITE_OPENAI_API_KEY` (and optionally `VITE_OPENAI_MODEL`, default `gpt-5.2`) to enable automatic fallback when Gemini is temporarily unavailable (for example HTTP 503 high demand).
 
 Place `.spz` files exported from Marble in `public/scenes/`.
+Configure world hub nodes in `public/scenes/worlds.json`.
 
 ---
 

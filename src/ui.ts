@@ -7,10 +7,19 @@ import {
   type processCommand as processCommandFn,
 } from "./agent";
 import { buildLocalSelection, formatSelectionHint } from "./click-selection";
-import type { executeOperations as executeOperationsFn, undoLastEdit as undoLastEditFn } from "./executor";
+import type {
+  executeOperations as executeOperationsFn,
+  undoLastEdit as undoLastEditFn,
+} from "./executor";
 import { getManifestJSON } from "./scene-manifest";
 import { getCellAtWorldPos, getNeighborCells } from "./spatial-index";
-import type { AssetEntry, SceneManifest, SpatialGrid } from "./types";
+import type {
+  AssetEntry,
+  SceneManifest,
+  SpatialGrid,
+  WorldEdgeConfig,
+  WorldNodeConfig,
+} from "./types";
 
 type ProcessCommand = typeof processCommandFn;
 type ExecuteOperations = typeof executeOperationsFn;
@@ -31,10 +40,20 @@ export interface UIDependencies {
   getAssetById?: (id: string) => AssetEntry | undefined;
   createPlacedAssetMesh?: (asset: AssetEntry, worldPos: THREE.Vector3) => SplatMesh;
   getPlacementParent?: () => THREE.Object3D;
+  listWorlds: () => readonly WorldNodeConfig[];
+  listWorldEdges: () => readonly WorldEdgeConfig[];
+  getCurrentWorldId: () => string | null;
+  loadWorldById: (worldId: string) => Promise<void>;
+  isWorldLoading?: () => boolean;
 }
 
 let toastContainer: HTMLDivElement | null = null;
+let worldHub: HTMLDivElement | null = null;
+let worldHubGraph: HTMLDivElement | null = null;
+let worldHubList: HTMLDivElement | null = null;
+let worldHubOpen = false;
 let initialized = false;
+
 const ENABLE_CLICK_SELECTION_HINTS =
   String(import.meta.env.VITE_ENABLE_CLICK_SELECTION_HINTS ?? "true").toLowerCase() !==
   "false";
@@ -113,8 +132,12 @@ export function initUI(deps: UIDependencies): void {
   toastContainer.id = "muse-toast-container";
   document.body.append(toastContainer);
 
+  buildWorldHub(deps);
+  renderWorldHub(deps);
+
   let selectedAssetId: string | null = null;
   let provider: "gemini" | "openai" = DEFAULT_PROVIDER;
+  let commandBusy = false;
   setProviderPreference(provider);
   providerButton.textContent = provider === "gemini" ? "Gemini" : "OpenAI";
 
@@ -126,10 +149,29 @@ export function initUI(deps: UIDependencies): void {
     "Click an object, then type a command. Try: 'remove this' or 'add warm lighting'"
   );
 
+  const setBusy = (busy: boolean) => {
+    commandBusy = busy;
+    const worldLoading = deps.isWorldLoading?.() ?? false;
+    const disableInput = busy || worldLoading;
+    input.disabled = disableInput;
+    sendButton.disabled = disableInput;
+    undoButton.disabled = busy;
+    providerButton.disabled = false;
+  };
+
+  const refreshBusyState = () => {
+    setBusy(commandBusy);
+  };
+
   const renderLibrary = () => {
     libraryList.replaceChildren();
 
-    if (!deps.listAssets || !deps.getAssetById || !deps.createPlacedAssetMesh || !deps.getPlacementParent) {
+    if (
+      !deps.listAssets ||
+      !deps.getAssetById ||
+      !deps.createPlacedAssetMesh ||
+      !deps.getPlacementParent
+    ) {
       const disabled = document.createElement("div");
       disabled.className = "muse-library-empty";
       disabled.textContent = "Asset placement unavailable.";
@@ -187,6 +229,10 @@ export function initUI(deps: UIDependencies): void {
       if (!selectedAssetId) {
         return;
       }
+      if (worldHubOpen) {
+        showToast("Close world hub to place assets", 1700);
+        return;
+      }
       if (!deps.getAssetById || !deps.createPlacedAssetMesh || !deps.getPlacementParent) {
         showToast("Placement APIs unavailable", 1800);
         selectedAssetId = null;
@@ -220,21 +266,18 @@ export function initUI(deps: UIDependencies): void {
     });
   }
 
-  const setBusy = (busy: boolean) => {
-    console.log(`[ui] setBusy(${busy})`);
-    input.disabled = busy;
-    sendButton.disabled = busy;
-    undoButton.disabled = busy;
-    providerButton.disabled = false;
-    if (!busy) {
-      input.focus();
-    }
-  };
-
   const handleSend = async () => {
+    if (worldHubOpen) {
+      showToast("Select or close world hub first", 1600);
+      return;
+    }
+    if (deps.isWorldLoading?.()) {
+      showToast("World is still loading", 1600);
+      return;
+    }
+
     const command = input.value.trim();
     if (!command) {
-      console.log("[ui] Ignoring empty command");
       return;
     }
 
@@ -259,16 +302,9 @@ export function initUI(deps: UIDependencies): void {
           : "";
       const apiKey = readGeminiApiKey();
 
-      console.log(
-        `[ui] Context: click=${formatVec3OrNull(clickPoint)} grid=${grid ? "ready" : "null"} manifest=${manifest ? "ready" : "null"} screenshotBytes=${screenshot.length} cropBytes=${screenshotCrop.length} apiKeyPresent=${apiKey.length > 0}`
-      );
-
       const voxelContext = buildVoxelContext(grid, clickPoint);
       const manifestSummary = manifest ? getManifestJSON(manifest) : null;
       setSecondaryScreenshotForNextCommand(screenshotCrop || null);
-      console.log(
-        `[ui] Prompt payload: voxelContextChars=${voxelContext?.length ?? 0} manifestChars=${manifestSummary?.length ?? 0}`
-      );
 
       const operations = await deps.processCommand(
         command,
@@ -278,11 +314,8 @@ export function initUI(deps: UIDependencies): void {
         screenshot,
         apiKey
       );
-      console.log(`[ui] Agent returned ${operations.length} operation(s)`);
-      console.log(`[ui] Operation summary: ${summarizeOperations(operations)}`);
 
       deps.executeOperations(operations, splatMesh);
-      console.log("[ui] Executor applied operations");
       appendMessage(
         messages,
         "assistant",
@@ -290,7 +323,8 @@ export function initUI(deps: UIDependencies): void {
       );
 
       for (const op of operations) {
-        const summary = op.assetLabel ?? `${op.shapes.length} shape${op.shapes.length === 1 ? "" : "s"}`;
+        const summary =
+          op.assetLabel ?? `${op.shapes.length} shape${op.shapes.length === 1 ? "" : "s"}`;
         showToast(`✓ ${op.action}: ${summary}`);
       }
 
@@ -299,16 +333,12 @@ export function initUI(deps: UIDependencies): void {
       const createdCount = Math.max(0, assetsAfter - assetsBefore);
       if (createdCount > 0) {
         showToast(`Saved ${createdCount} asset${createdCount === 1 ? "" : "s"}`);
-        appendMessage(
-          messages,
-          "system",
-          `Saved ${createdCount} asset${createdCount === 1 ? "" : "s"} to library.`
-        );
       }
 
       setStatus(status, "Ready");
       input.value = "";
-      const elapsedMs = (typeof performance !== "undefined" ? performance.now() : Date.now()) - startedAt;
+      const elapsedMs =
+        (typeof performance !== "undefined" ? performance.now() : Date.now()) - startedAt;
       console.log(`[ui] Command complete in ${elapsedMs.toFixed(1)}ms`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -333,7 +363,6 @@ export function initUI(deps: UIDependencies): void {
   });
 
   undoButton.addEventListener("click", () => {
-    console.log("[ui] Undo button clicked");
     const undone = deps.undoLastEdit();
     if (undone) {
       appendMessage(messages, "system", "Undid last edit.");
@@ -348,7 +377,6 @@ export function initUI(deps: UIDependencies): void {
     setProviderPreference(provider);
     providerButton.textContent = provider === "gemini" ? "Gemini" : "OpenAI";
     showToast(`Provider: ${providerButton.textContent}`, 1400);
-    appendMessage(messages, "system", `LLM provider set to ${providerButton.textContent}.`);
   });
 
   window.addEventListener("keydown", (event) => {
@@ -360,10 +388,27 @@ export function initUI(deps: UIDependencies): void {
       return;
     }
 
+    if (event.key === "Escape") {
+      if (document.activeElement === input) {
+        input.blur();
+        setStatus(status, "Ready");
+        return;
+      }
+      if (worldHubOpen) {
+        closeWorldHub();
+        setStatus(status, "Ready");
+      } else {
+        openWorldHub();
+        renderWorldHub(deps);
+        setStatus(status, "Select a world");
+      }
+      refreshBusyState();
+      return;
+    }
+
     if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "z") {
       return;
     }
-    console.log("[ui] Undo shortcut triggered");
     event.preventDefault();
     const undone = deps.undoLastEdit();
     if (undone) {
@@ -374,15 +419,25 @@ export function initUI(deps: UIDependencies): void {
     }
   });
 
-  input.focus();
+  worldHub?.addEventListener("click", (event) => {
+    if (event.target === worldHub) {
+      closeWorldHub();
+      refreshBusyState();
+    }
+  });
+
+  if (deps.isWorldLoading) {
+    window.setInterval(() => {
+      refreshBusyState();
+    }, 250);
+  }
+
 }
 
 export function showToast(message: string, duration: number = 3000): void {
   if (!toastContainer) {
-    console.warn("[ui] showToast called before toast container exists");
     return;
   }
-  console.log(`[ui] Toast: "${message}" (${duration}ms)`);
 
   const toast = document.createElement("div");
   toast.className = "muse-toast";
@@ -397,6 +452,144 @@ export function showToast(message: string, duration: number = 3000): void {
   window.setTimeout(() => {
     toast.remove();
   }, duration);
+}
+
+export function openWorldHub(): void {
+  if (!worldHub) {
+    return;
+  }
+  worldHub.classList.remove("hidden");
+  worldHubOpen = true;
+}
+
+export function closeWorldHub(): void {
+  if (!worldHub) {
+    return;
+  }
+  worldHub.classList.add("hidden");
+  worldHubOpen = false;
+}
+
+function buildWorldHub(deps: UIDependencies): void {
+  worldHub = document.createElement("div");
+  worldHub.id = "muse-world-hub";
+  worldHub.classList.add("hidden");
+
+  const panel = document.createElement("div");
+  panel.id = "muse-world-panel";
+
+  const title = document.createElement("h2");
+  title.id = "muse-world-title";
+  title.textContent = "Choose A World";
+
+  const subtitle = document.createElement("p");
+  subtitle.id = "muse-world-subtitle";
+  subtitle.textContent = "Press Esc anytime to return to this hub.";
+
+  worldHubGraph = document.createElement("div");
+  worldHubGraph.id = "muse-world-graph";
+
+  worldHubList = document.createElement("div");
+  worldHubList.id = "muse-world-list";
+
+  panel.append(title, subtitle, worldHubGraph, worldHubList);
+  worldHub.append(panel);
+  document.body.append(worldHub);
+
+  worldHub.addEventListener("click", (event) => {
+    const target = event.target as HTMLElement | null;
+    const worldButton = target?.closest<HTMLElement>("[data-world-id]");
+    const worldId = worldButton?.dataset.worldId;
+    if (!worldId) {
+      return;
+    }
+
+    void handleWorldSelect(deps, worldId);
+  });
+}
+
+function renderWorldHub(deps: UIDependencies): void {
+  if (!worldHubGraph || !worldHubList) {
+    return;
+  }
+  worldHubGraph.replaceChildren();
+  worldHubList.replaceChildren();
+
+  const worlds = deps.listWorlds();
+  const edges = deps.listWorldEdges();
+  const currentWorldId = deps.getCurrentWorldId();
+  const nodeById = new Map(worlds.map((world) => [world.id, world]));
+
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "muse-world-edges");
+  svg.setAttribute("viewBox", "0 0 100 100");
+  svg.setAttribute("preserveAspectRatio", "none");
+
+  for (const edge of edges) {
+    const from = nodeById.get(edge.from);
+    const to = nodeById.get(edge.to);
+    if (!from || !to) {
+      continue;
+    }
+    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    line.setAttribute("x1", `${from.position[0] * 100}`);
+    line.setAttribute("y1", `${from.position[1] * 100}`);
+    line.setAttribute("x2", `${to.position[0] * 100}`);
+    line.setAttribute("y2", `${to.position[1] * 100}`);
+    svg.append(line);
+  }
+  worldHubGraph.append(svg);
+
+  for (const world of worlds) {
+    const node = document.createElement("button");
+    node.type = "button";
+    node.className = "muse-world-node";
+    if (world.id === currentWorldId) {
+      node.classList.add("active");
+    }
+    node.dataset.worldId = world.id;
+    node.style.left = `${world.position[0] * 100}%`;
+    node.style.top = `${world.position[1] * 100}%`;
+    node.textContent = world.label;
+    worldHubGraph.append(node);
+
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "muse-world-list-item";
+    if (world.id === currentWorldId) {
+      row.classList.add("active");
+    }
+    row.dataset.worldId = world.id;
+    row.innerHTML = `<strong>${escapeHtml(world.label)}</strong><span>${escapeHtml(
+      world.description ?? world.sceneUrl
+    )}</span>`;
+    worldHubList.append(row);
+  }
+}
+
+async function handleWorldSelect(deps: UIDependencies, worldId: string): Promise<void> {
+  const world = deps.listWorlds().find((entry) => entry.id === worldId);
+  if (!world) {
+    showToast("Unknown world", 1600);
+    return;
+  }
+
+  if (deps.isWorldLoading?.()) {
+    showToast("World is already loading", 1600);
+    return;
+  }
+
+  showToast(`Loading ${world.label}...`, 1300);
+  try {
+    await deps.loadWorldById(worldId);
+    renderWorldHub(deps);
+    closeWorldHub();
+    showToast(`Loaded ${world.label}`);
+  } catch (error) {
+    console.error("[ui] Failed to load world", error);
+    showToast(`Failed to load ${world.label}`, 2200);
+    openWorldHub();
+  }
 }
 
 function appendMessage(
@@ -424,45 +617,25 @@ function setLibraryStatus(statusEl: HTMLDivElement, text: string): void {
   statusEl.textContent = text;
 }
 
-function buildVoxelContext(
-  grid: SpatialGrid | null,
-  clickPoint: THREE.Vector3 | null
-): string | null {
+function buildVoxelContext(grid: SpatialGrid | null, clickPoint: THREE.Vector3 | null): string | null {
   if (!grid || !clickPoint) {
-    console.log(
-      `[ui] buildVoxelContext skipped: grid=${Boolean(grid)} clickPoint=${Boolean(clickPoint)}`
-    );
     return null;
   }
 
   const cell = getCellAtWorldPos(grid, clickPoint);
   const neighbors = cell ? getNeighborCells(grid, cell, 1) : [];
-  console.log(
-    `[ui] buildVoxelContext: cell=${cell ? cell.gridPos.join(",") : "none"} neighbors=${neighbors.length}`
-  );
   const baseContext = buildClickContext(clickPoint, cell, neighbors);
 
   if (!ENABLE_CLICK_SELECTION_HINTS) {
-    console.log("[ui] Deterministic selection hints disabled via feature flag");
     return baseContext;
   }
 
   const selection = buildLocalSelection(grid, clickPoint);
-  if (!selection) {
-    console.log("[ui] Deterministic selection unavailable; using base context");
-    return baseContext;
-  }
-  if (selection.confidence < MIN_SELECTION_CONFIDENCE) {
-    console.log(
-      `[ui] Deterministic selection confidence too low (${selection.confidence.toFixed(3)}); fallback to base context`
-    );
+  if (!selection || selection.confidence < MIN_SELECTION_CONFIDENCE) {
     return baseContext;
   }
 
   const hint = formatSelectionHint(selection);
-  console.log(
-    `[ui] Deterministic selection included confidence=${selection.confidence.toFixed(3)} cells=${selection.clusterCellKeys.length}`
-  );
   return `${baseContext}\n\n${hint}`;
 }
 
@@ -480,24 +653,15 @@ function readGeminiApiKey(): string {
   if (googleKey) {
     return googleKey;
   }
-
   return String(import.meta.env.VITE_GEMINI_API_KEY ?? "").trim();
 }
 
-function formatVec3OrNull(vec: THREE.Vector3 | null): string {
-  if (!vec) {
-    return "null";
-  }
-  return `[${vec.x.toFixed(3)}, ${vec.y.toFixed(3)}, ${vec.z.toFixed(3)}]`;
-}
-
-function summarizeOperations(
-  operations: Array<{ action: string; shapes: Array<{ type: string }> }>
-): string {
-  if (operations.length === 0) {
-    return "none";
-  }
-  return operations
-    .map((op, index) => `${index + 1}:${op.action}[${op.shapes.map((s) => s.type).join(",")}]`)
-    .join(" | ");
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (token) => {
+    if (token === "&") return "&amp;";
+    if (token === "<") return "&lt;";
+    if (token === ">") return "&gt;";
+    if (token === '"') return "&quot;";
+    return "&#39;";
+  });
 }

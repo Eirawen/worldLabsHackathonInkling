@@ -1,0 +1,22 @@
+{
+  "defaultWorldId": "library",
+  "nodes": [
+    {
+      "id": "library",
+      "label": "Elegant Library",
+      "sceneUrl": "/scenes/elegant_library_with_fireplace_500k.spz",
+      "position": [0.3, 0.55],
+      "description": "Warm interior with fireplace and pillows"
+    },
+    {
+      "id": "throne",
+      "label": "Throne",
+      "sceneUrl": "/scenes/throne.spz",
+      "position": [0.7, 0.45],
+      "description": "Dramatic throne composition for fast transfer demos"
+    }
+  ],
+  "edges": [
+    { "from": "library", "to": "throne" }
+  ]
+}

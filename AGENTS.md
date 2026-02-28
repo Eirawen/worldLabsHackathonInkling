@@ -58,6 +58,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
 ```
 main.ts
+  ├── world-catalog.ts   (loads and validates multi-world hub manifest)
   ├── viewer.ts          (no deps besides Three/Spark)
   ├── spatial-index.ts   (depends on: viewer.ts for SplatMesh access)
   ├── scene-manifest.ts  (depends on: spatial-index.ts, viewer.ts)
@@ -303,9 +304,8 @@ Keep the UI minimal and clean. This is a demo, not a product. Tailwind via CDN o
 #### `main.ts` — Orchestration
 Responsibilities:
 - Initialize viewer
-- Wait for SplatMesh load
-- Build spatial index
-- Generate (or load cached) scene manifest
+- Load world catalog (`public/scenes/worlds.json`)
+- Handle world switching (swap active SplatMesh, rebuild spatial index + manifest)
 - Wire up UI events → agent → executor → asset library pipeline
 - Handle the render loop
 

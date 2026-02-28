@@ -227,6 +227,120 @@ html, body {
   color: rgba(255, 255, 255, 0.68);
 }
 
+#muse-world-hub {
+  position: fixed;
+  inset: 0;
+  z-index: 170;
+  background: rgba(4, 8, 14, 0.78);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+#muse-world-hub.hidden {
+  display: none;
+}
+
+#muse-world-panel {
+  width: min(900px, 95vw);
+  max-height: 92vh;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 14px;
+  background: rgba(8, 16, 24, 0.92);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+#muse-world-title {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+#muse-world-subtitle {
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 13px;
+}
+
+#muse-world-graph {
+  position: relative;
+  width: 100%;
+  height: clamp(260px, 40vh, 420px);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background:
+    radial-gradient(circle at 20% 20%, rgba(90, 130, 190, 0.26), transparent 45%),
+    radial-gradient(circle at 75% 70%, rgba(180, 130, 90, 0.24), transparent 46%),
+    rgba(11, 18, 28, 0.9);
+  overflow: hidden;
+}
+
+.muse-world-edges {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.muse-world-edges line {
+  stroke: rgba(170, 200, 255, 0.38);
+  stroke-width: 0.35;
+}
+
+.muse-world-node {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+  background: rgba(15, 26, 40, 0.95);
+  color: #fff;
+  padding: 8px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.muse-world-node:hover {
+  background: rgba(34, 57, 81, 0.95);
+}
+
+.muse-world-node.active {
+  border-color: rgba(101, 208, 255, 0.95);
+  box-shadow: 0 0 0 1px rgba(101, 208, 255, 0.6) inset;
+}
+
+#muse-world-list {
+  display: none;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.muse-world-list-item {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  padding: 10px;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.muse-world-list-item span {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.68);
+}
+
+.muse-world-list-item.active {
+  border-color: rgba(101, 208, 255, 0.95);
+  background: rgba(101, 208, 255, 0.16);
+}
+
 @media (max-width: 768px) {
   #muse-chat-container {
     right: 0;
@@ -262,5 +376,19 @@ html, body {
     bottom: 116px;
     border-left: 0;
     border-top: 1px solid rgba(255, 255, 255, 0.14);
+  }
+
+  #muse-world-panel {
+    padding: 14px;
+    gap: 10px;
+  }
+
+  #muse-world-graph {
+    height: 220px;
+  }
+
+  #muse-world-list {
+    display: grid;
+    grid-template-columns: 1fr;
   }
 }
