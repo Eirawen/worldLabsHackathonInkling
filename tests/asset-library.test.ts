@@ -137,6 +137,39 @@ describe("asset-library extraction", () => {
     expect(capsuleEntry?.splatCount).toBe(18);
   });
 
+  it("creates synthetic fallback asset when region capture is empty", async () => {
+    const { extractAssetFromDeleteOperation } = await import("../src/asset-library");
+
+    const op = deleteOp({
+      type: "BOX",
+      position: [100, 100, 100],
+      scale: [0.1, 0.1, 0.1],
+    });
+    const mesh = makeMesh(repeatPoint(new THREE.Vector3(0, 0, 0), 12));
+
+    const entry = extractAssetFromDeleteOperation(op, mesh, "scene-synth");
+    expect(entry).not.toBeNull();
+    expect(entry?.splatCount).toBeGreaterThan(0);
+  });
+
+  it("uses proximity fallback before synthetic when strict region misses", async () => {
+    const { extractAssetFromDeleteOperation } = await import("../src/asset-library");
+
+    const op = deleteOp({
+      type: "SPHERE",
+      position: [0, 0, 0],
+      radius: 0.01,
+    });
+    const mesh = makeMesh([
+      ...repeatPoint(new THREE.Vector3(0.25, 0, 0), 14),
+      ...repeatPoint(new THREE.Vector3(2.5, 2.5, 2.5), 6),
+    ]);
+
+    const entry = extractAssetFromDeleteOperation(op, mesh, "scene-prox");
+    expect(entry).not.toBeNull();
+    expect(entry?.splatCount).toBeGreaterThan(1);
+  });
+
   it("normalizes extracted positions around centroid and keeps world bounds", async () => {
     const { extractAssetFromDeleteOperation } = await import("../src/asset-library");
 
