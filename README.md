@@ -6,13 +6,14 @@
 
 Built on **Spark** (World Labs' open-source gaussian splat renderer) and powered by **Gemini** for spatial reasoning, Marble Muse turns Marble's 6-minute generation cycle into a real-time creative loop.
 
+```bash
 First time run instructions:
 Create a .env file inside of the repository
 Declare - VITE_OPENAI_API_KEY=*key* and/or VITE_GEMINI_API_KEY
 then pnpm dev (or npm run dev). 
 Navigate the world with wasd. Move up and down with q/e. Rotate with right mouse. 
 Make requests in the chat to the bottom to change colors, remove an object, modify an image. Some requests can take ~20-30 seconds.
-
+```
 
 ---
 
