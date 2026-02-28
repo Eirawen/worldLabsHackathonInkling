@@ -6,6 +6,7 @@ const GEMINI_MODEL = "gemini-3-flash-preview";
 const MAX_RETRIES = 1;
 const MAX_TOKENS = 4096;
 const MARKDOWN_JSON_REGEX = /```json?\s*([\s\S]*?)```/i;
+let pendingSecondaryScreenshotBase64: string | null = null;
 
 const ACTIONS = new Set<EditOperation["action"]>([
   "delete",
@@ -341,8 +342,10 @@ export async function processCommand(
 
   let lastError: Error | null = null;
   const ai = new GoogleGenAI({ apiKey });
+  const secondaryScreenshotBase64 = pendingSecondaryScreenshotBase64;
+  pendingSecondaryScreenshotBase64 = null;
   console.log(
-    `[agent] processCommand start command="${trimmedCommand}" click=${clickPosition ? formatVec3(clickPosition) : "null"} voxelChars=${voxelContext?.length ?? 0} manifestChars=${manifestSummary?.length ?? 0} screenshotBytes=${screenshotBase64?.length ?? 0}`
+    `[agent] processCommand start command="${trimmedCommand}" click=${clickPosition ? formatVec3(clickPosition) : "null"} voxelChars=${voxelContext?.length ?? 0} manifestChars=${manifestSummary?.length ?? 0} screenshotBytes=${screenshotBase64?.length ?? 0} secondaryScreenshotBytes=${secondaryScreenshotBase64?.length ?? 0}`
   );
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
@@ -353,12 +356,17 @@ export async function processCommand(
         clickPosition,
         voxelContext,
         manifestSummary,
-        retrying
+        retrying,
+        Boolean(secondaryScreenshotBase64)
       );
-      const contents = buildContents(userText, screenshotBase64);
-      const hasImage = Boolean(contents[0]?.parts.some((part) => "inlineData" in part));
+      const contents = buildContents(
+        userText,
+        screenshotBase64,
+        secondaryScreenshotBase64
+      );
+      const imageParts = contents[0]?.parts.filter((part) => "inlineData" in part).length ?? 0;
       console.log(
-        `[agent] Gemini request attempt=${attempt + 1}/${MAX_RETRIES + 1} model=${GEMINI_MODEL} hasImage=${hasImage} promptChars=${userText.length}`
+        `[agent] Gemini request attempt=${attempt + 1}/${MAX_RETRIES + 1} model=${GEMINI_MODEL} imageParts=${imageParts} promptChars=${userText.length}`
       );
 
       const response = await ai.models.generateContent({
@@ -400,7 +408,8 @@ export async function processCommand(
 
 function buildContents(
   userText: string,
-  screenshotBase64: string | null
+  screenshotBase64: string | null,
+  secondaryScreenshotBase64: string | null
 ): Array<{
   role: "user";
   parts: Array<
@@ -421,8 +430,17 @@ function buildContents(
       },
     });
   }
+  const normalizedSecondaryImage = normalizeScreenshotBase64(secondaryScreenshotBase64);
+  if (normalizedSecondaryImage) {
+    parts.push({
+      inlineData: {
+        mimeType: "image/png",
+        data: normalizedSecondaryImage,
+      },
+    });
+  }
   console.log(
-    `[agent] buildContents imageIncluded=${Boolean(normalizedImage)} imageBytes=${normalizedImage?.length ?? 0}`
+    `[agent] buildContents primaryImageIncluded=${Boolean(normalizedImage)} primaryImageBytes=${normalizedImage?.length ?? 0} secondaryImageIncluded=${Boolean(normalizedSecondaryImage)} secondaryImageBytes=${normalizedSecondaryImage?.length ?? 0}`
   );
   parts.push({ text: userText });
   return [{ role: "user", parts }];
@@ -433,7 +451,8 @@ function buildUserText(
   clickPosition: THREE.Vector3 | null,
   voxelContext: string | null,
   manifestSummary: string | null,
-  simplifyForRetry: boolean
+  simplifyForRetry: boolean,
+  hasSecondaryImage: boolean
 ): string {
   const lines: string[] = [];
 
@@ -461,6 +480,11 @@ function buildUserText(
   lines.push("Output requirements:");
   lines.push("- Return only a valid JSON array of EditOperation objects.");
   lines.push("- No markdown, no prose.");
+  if (hasSecondaryImage) {
+    lines.push(
+      "- The second image is a click-centered crop around the selected target. Prefer it for local object boundaries."
+    );
+  }
   if (simplifyForRetry) {
     lines.push(
       "- Return only valid JSON array of EditOperation objects. No markdown."
@@ -470,6 +494,15 @@ function buildUserText(
   lines.push(`User command: ${command}`);
 
   return lines.join("\n");
+}
+
+export function setSecondaryScreenshotForNextCommand(
+  screenshotBase64: string | null
+): void {
+  pendingSecondaryScreenshotBase64 = normalizeScreenshotBase64(screenshotBase64);
+  console.log(
+    `[agent] setSecondaryScreenshotForNextCommand bytes=${pendingSecondaryScreenshotBase64?.length ?? 0}`
+  );
 }
 
 function extractTextFromGeminiResponse(payload: GenerateContentResponse): string {

@@ -49,3 +49,5 @@
 20. **Scene-manifest heuristic labels are hints, not ground truth.** The color/height classification in `scene-manifest.ts` (T10 MVP) uses simple rules (green=vegetation, grey+low=ground, etc.). Indoor scenes like libraries will mostly get "structure" and "warm_surface" labels. The labels are context for the LLM agent, not reliable identifiers. Full Claude Vision analysis (T15) is needed for accurate labeling.
 
 21. **Gemini SDK increases client bundle size.** Adding `@google/genai` in browser builds increased the main bundle size warning threshold in Vite. For demo stability this is acceptable, but production should consider code-splitting the agent path or moving LLM calls behind a backend proxy.
+
+22. **Placed extracted assets also need the Spark orientation quaternion.** When re-inserting an extracted `PackedSplats` asset via `new SplatMesh({ packedSplats })`, set `mesh.quaternion.set(1, 0, 0, 0)` before placement. Using identity quaternion can produce incorrect orientation relative to the loaded scene.
