@@ -53,3 +53,5 @@
 22. **Placed extracted assets also need the Spark orientation quaternion.** When re-inserting an extracted `PackedSplats` asset via `new SplatMesh({ packedSplats })`, set `mesh.quaternion.set(1, 0, 0, 0)` before placement. Using identity quaternion can produce incorrect orientation relative to the loaded scene.
 
 23. **Asset extraction can silently return empty if selection is too small or shape type is unsupported.** If a delete op produces no library item, check extraction logs (`[asset-library]`) for: unsupported shape types, low kept splat count, or aggressive thresholds. Current implementation supports `SPHERE`, `ELLIPSOID`, `BOX`, `CYLINDER`, and `CAPSULE`, with `MIN_ASSET_SPLATS=8`.
+
+24. **Spatial grid and click points must be in the same frame.** `forEachSplat()` and `getBoundingBox()` are in `SplatMesh` local space, while raycast `hit.point` is world space. If the mesh has a non-identity transform (for example `quaternion.set(1,0,0,0)`), local-grid lookup with world click points will target mirrored/wrong cells. Build the grid in world space (transform bounds + centers with `matrixWorld`) or explicitly convert clicks to local before lookup.

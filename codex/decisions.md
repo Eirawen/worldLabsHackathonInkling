@@ -34,3 +34,8 @@
 **Date:** 2026-02-26
 **Decision:** Use Marble's 500k splat export option for all web demo scenes, not the 2M version.
 **Rationale:** 500k splats render well on laptops, load faster, and raycast faster. The 2M version is more detailed but causes performance issues in browser. For a live demo, smooth 60fps matters more than maximum detail.
+
+## AD-008: Spatial grid canonical frame is world space
+**Date:** 2026-02-28
+**Decision:** `SpatialGrid.worldBounds`, `VoxelCell.worldCenter`, and `VoxelCell.worldBounds` are built in world space by transforming local splat centers/bounds with `splatMesh.matrixWorld`.
+**Rationale:** Raycast clicks are world-space coordinates. Building the grid in local mesh space caused wrong-cell lookups when the mesh had non-identity transforms (notably the required `quaternion.set(1,0,0,0)` orientation fix). World-space indexing removes downstream conversion bugs across UI selection hints, voxel context, and SDF placement.

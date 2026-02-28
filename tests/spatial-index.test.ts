@@ -8,6 +8,7 @@ import {
   getNeighborCells,
   gridKey,
   serializeSpatialGridForLLM,
+  transformBoundsToWorld,
   worldPosToGridCoord,
 } from "../src/spatial-index";
 
@@ -94,6 +95,28 @@ describe("computeNominalCellSize", () => {
     const size = computeNominalCellSize(bounds, [5, 5, 5]);
     expect(size.y).toBe(0);
     expect(size.x).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// transformBoundsToWorld
+// ---------------------------------------------------------------------------
+
+describe("transformBoundsToWorld", () => {
+  it("transforms local bounds into world-space AABB", () => {
+    const local = new THREE.Box3(
+      new THREE.Vector3(-1, -2, -3),
+      new THREE.Vector3(4, 5, 6)
+    );
+    const matrixWorld = new THREE.Matrix4().compose(
+      new THREE.Vector3(10, 20, 30),
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI),
+      new THREE.Vector3(1, 1, 1)
+    );
+
+    const world = transformBoundsToWorld(local, matrixWorld);
+    expect(world.min.toArray()).toEqual([9, 15, 24]);
+    expect(world.max.toArray()).toEqual([14, 22, 33]);
   });
 });
 

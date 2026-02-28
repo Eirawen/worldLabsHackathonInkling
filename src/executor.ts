@@ -60,7 +60,7 @@ export function executeOperations(
       rgbaBlendMode: BLEND_MODE_MAP[op.blendMode],
       softEdge: op.softEdge,
       sdfSmooth: op.sdfSmooth,
-      invert: op.invert,
+      invert: op.invert === true ? true : false,
     });
 
     for (const [shapeIndex, shape] of op.shapes.entries()) {
