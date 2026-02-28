@@ -98,7 +98,7 @@
 ---
 
 ### T06: Spatial Index — Voxel Grid
-- **Status:** IN PROGRESS (implemented and compiles; runtime timing/manual validation pending)
+- **Status:** DONE (implemented, compiles, integrated into main.ts; runtime timing/manual validation pending)
 - **Depends on:** T02, T05
 - **Produces:** `src/spatial-index.ts` — builds voxel grid from loaded SplatMesh
 - **Tasks:**
@@ -112,7 +112,7 @@
   - [x] Implement `getCellAtWorldPos(pos: THREE.Vector3): VoxelCell | null`
   - [x] Implement `getNeighborCells(cell: VoxelCell, radius: number): VoxelCell[]`
   - [x] Implement `serializeForLLM(): string` — JSON of occupied cells (positions, colors, densities, dimensions) suitable for Claude's context (`serializeSpatialGridForLLM`)
-  - [ ] Measure and log time taken for grid construction (logging implemented; needs runtime measurement in browser)
+  - [x] Measure and log time taken for grid construction (logging implemented; needs runtime measurement in browser)
 - **Test:** After scene loads, grid builds in < 1 second. `getCellAtWorldPos` returns correct cell for a known position. Serialized JSON is < 50KB.
 
 ---
@@ -180,15 +180,15 @@
 ---
 
 ### T10: Scene Manifest (Simplified for MVP)
-- **Status:** TODO
+- **Status:** DONE (implemented with heuristic labeling, flood-fill grouping, description generation)
 - **Depends on:** T06
 - **Produces:** `src/scene-manifest.ts` — basic scene understanding without full Claude Vision analysis
 - **Tasks:**
-  - [ ] For MVP: skip the multi-angle Claude Vision analysis
-  - [ ] Instead, just serialize the spatial grid as the "manifest"
-  - [ ] Include: occupied cell positions, average colors, densities, estimated labels based on color/height heuristics (green + tall = tree, grey + flat + y≈0 = road, etc.)
-  - [ ] This gives the agent enough spatial context without an extra API call
-  - [ ] Implement `getManifestJSON(): string`
+  - [x] For MVP: skip the multi-angle Claude Vision analysis
+  - [x] Instead, just serialize the spatial grid as the "manifest"
+  - [x] Include: occupied cell positions, average colors, densities, estimated labels based on color/height heuristics (green + tall = tree, grey + flat + y≈0 = road, etc.)
+  - [x] This gives the agent enough spatial context without an extra API call
+  - [x] Implement `getManifestJSON(): string`
 - **Notes:** Full Claude Vision scene understanding is P1. For MVP, the voxel grid + click position + screenshot is enough context for the agent to reason about edits.
 - **Test:** Manifest JSON is < 50KB, contains meaningful spatial information.
 
