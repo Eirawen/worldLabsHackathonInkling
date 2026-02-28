@@ -26,12 +26,12 @@ export interface SelectionResult {
 }
 
 const DEFAULT_OPTIONS: Required<SelectionOptions> = {
-  colorDistanceThreshold: 0.24,
+  colorDistanceThreshold: 0.32,
   maxVisitedCells: 180,
-  maxDepth: 4,
-  maxClusterCells: 90,
+  maxDepth: 5,
+  maxClusterCells: 120,
   minClusterCells: 2,
-  boxPadding: 1.08,
+  boxPadding: 1.18,
 };
 
 type QueueItem = {

@@ -38,7 +38,7 @@ const ENABLE_CLICK_SELECTION_HINTS =
   String(import.meta.env.VITE_ENABLE_CLICK_SELECTION_HINTS ?? "true").toLowerCase() !==
   "false";
 const CROP_SIZE_PX = 320;
-const MIN_SELECTION_CONFIDENCE = 0.35;
+const MIN_SELECTION_CONFIDENCE = 0.15;
 
 export function initUI(deps: UIDependencies): void {
   if (initialized) {
