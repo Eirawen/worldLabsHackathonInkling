@@ -36,8 +36,12 @@ export function executeOperations(
   parent: THREE.Object3D
 ): SplatEdit[] {
   const applied: SplatEdit[] = [];
+  console.log(`[executor] executeOperations called with ${ops.length} op(s)`);
 
-  for (const op of ops) {
+  for (const [opIndex, op] of ops.entries()) {
+    console.log(
+      `[executor] Op ${opIndex + 1}/${ops.length}: action=${op.action} blend=${op.blendMode} shapes=${op.shapes.length} softEdge=${op.softEdge ?? "default"} sdfSmooth=${op.sdfSmooth ?? "default"} invert=${op.invert ?? false}`
+    );
     const edit = new SplatEdit({
       rgbaBlendMode: BLEND_MODE_MAP[op.blendMode],
       softEdge: op.softEdge,
@@ -45,7 +49,10 @@ export function executeOperations(
       invert: op.invert,
     });
 
-    for (const shape of op.shapes) {
+    for (const [shapeIndex, shape] of op.shapes.entries()) {
+      console.log(
+        `[executor]   Shape ${shapeIndex + 1}/${op.shapes.length}: type=${shape.type} pos=[${shape.position.join(", ")}] radius=${shape.radius ?? "-"} opacity=${shape.opacity ?? "-"} scale=${shape.scale ? `[${shape.scale.join(", ")}]` : "-"}`
+      );
       const sdf = new SplatEditSdf({
         type: SHAPE_TYPE_MAP[shape.type],
       });
@@ -85,6 +92,9 @@ export function executeOperations(
 
     const targetParent = resolveParentForOperation(op, parent);
     targetParent.add(edit);
+    console.log(
+      `[executor] Added edit to parent=${targetParent.type} (isScene=${targetParent instanceof THREE.Scene})`
+    );
 
     history.push({ edit, addedParent: targetParent });
     applied.push(edit);
@@ -98,10 +108,14 @@ export function executeOperations(
 export function undoLastEdit(): boolean {
   const last = history.pop();
   if (!last) {
+    console.log("[executor] undoLastEdit called with empty history");
     return false;
   }
 
   const removalParent = last.edit.parent ?? last.addedParent;
+  console.log(
+    `[executor] undoLastEdit removing from parent=${removalParent.type} historyBefore=${history.length + 1}`
+  );
   removalParent.remove(last.edit);
 
   const maybeDisposable = last.edit as unknown as { dispose?: () => void };
@@ -114,6 +128,7 @@ export function undoLastEdit(): boolean {
 }
 
 export function undoAllEdits(): void {
+  console.log(`[executor] undoAllEdits called for ${history.length} edit(s)`);
   while (history.length > 0) {
     const entry = history.pop()!;
     const removalParent = entry.edit.parent ?? entry.addedParent;
@@ -141,15 +156,18 @@ function resolveParentForOperation(
   const shouldUseScene = op.action === "atmosphere" || isGlobalLight;
 
   if (!shouldUseScene) {
+    console.log("[executor] Parent resolution: using provided parent (scoped edit)");
     return defaultParent;
   }
 
   if (defaultParent instanceof THREE.Scene) {
+    console.log("[executor] Parent resolution: provided parent is scene (global edit)");
     return defaultParent;
   }
 
   const sceneAncestor = findSceneAncestor(defaultParent);
   if (sceneAncestor) {
+    console.log("[executor] Parent resolution: found scene ancestor for global edit");
     return sceneAncestor;
   }
 

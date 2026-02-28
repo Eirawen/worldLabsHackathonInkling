@@ -26,9 +26,11 @@ let initialized = false;
 
 export function initUI(deps: UIDependencies): void {
   if (initialized) {
+    console.log("[ui] initUI skipped (already initialized)");
     return;
   }
   initialized = true;
+  console.log("[ui] Initializing chat UI");
 
   const container = document.createElement("div");
   container.id = "muse-chat-container";
@@ -74,6 +76,7 @@ export function initUI(deps: UIDependencies): void {
   );
 
   const setBusy = (busy: boolean) => {
+    console.log(`[ui] setBusy(${busy})`);
     input.disabled = busy;
     sendButton.disabled = busy;
     if (!busy) {
@@ -84,12 +87,15 @@ export function initUI(deps: UIDependencies): void {
   const handleSend = async () => {
     const command = input.value.trim();
     if (!command) {
+      console.log("[ui] Ignoring empty command");
       return;
     }
 
+    const startedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
     appendMessage(messages, "user", command);
     setBusy(true);
     setStatus(status, "Thinking...");
+    console.log(`[ui] Processing command="${command}"`);
 
     try {
       const clickPoint = deps.getLastClickPoint();
@@ -99,8 +105,15 @@ export function initUI(deps: UIDependencies): void {
       const screenshot = normalizeScreenshotDataUrl(deps.getScreenshot());
       const apiKey = String(import.meta.env.VITE_GEMINI_API_KEY ?? "").trim();
 
+      console.log(
+        `[ui] Context: click=${formatVec3OrNull(clickPoint)} grid=${grid ? "ready" : "null"} manifest=${manifest ? "ready" : "null"} screenshotBytes=${screenshot.length} apiKeyPresent=${apiKey.length > 0}`
+      );
+
       const voxelContext = buildVoxelContext(grid, clickPoint);
       const manifestSummary = manifest ? getManifestJSON(manifest) : null;
+      console.log(
+        `[ui] Prompt payload: voxelContextChars=${voxelContext?.length ?? 0} manifestChars=${manifestSummary?.length ?? 0}`
+      );
 
       const operations = await deps.processCommand(
         command,
@@ -110,8 +123,11 @@ export function initUI(deps: UIDependencies): void {
         screenshot,
         apiKey
       );
+      console.log(`[ui] Agent returned ${operations.length} operation(s)`);
+      console.log(`[ui] Operation summary: ${summarizeOperations(operations)}`);
 
       deps.executeOperations(operations, splatMesh);
+      console.log("[ui] Executor applied operations");
       appendMessage(
         messages,
         "assistant",
@@ -125,6 +141,8 @@ export function initUI(deps: UIDependencies): void {
 
       setStatus(status, "Ready");
       input.value = "";
+      const elapsedMs = (typeof performance !== "undefined" ? performance.now() : Date.now()) - startedAt;
+      console.log(`[ui] Command complete in ${elapsedMs.toFixed(1)}ms`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error("[ui] Command failed", error);
@@ -148,6 +166,7 @@ export function initUI(deps: UIDependencies): void {
   });
 
   undoButton.addEventListener("click", () => {
+    console.log("[ui] Undo button clicked");
     const undone = deps.undoLastEdit();
     if (undone) {
       appendMessage(messages, "system", "Undid last edit.");
@@ -161,6 +180,7 @@ export function initUI(deps: UIDependencies): void {
     if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "z") {
       return;
     }
+    console.log("[ui] Undo shortcut triggered");
     event.preventDefault();
     const undone = deps.undoLastEdit();
     if (undone) {
@@ -176,8 +196,10 @@ export function initUI(deps: UIDependencies): void {
 
 export function showToast(message: string, duration: number = 3000): void {
   if (!toastContainer) {
+    console.warn("[ui] showToast called before toast container exists");
     return;
   }
+  console.log(`[ui] Toast: "${message}" (${duration}ms)`);
 
   const toast = document.createElement("div");
   toast.className = "muse-toast";
@@ -220,11 +242,17 @@ function buildVoxelContext(
   clickPoint: THREE.Vector3 | null
 ): string | null {
   if (!grid || !clickPoint) {
+    console.log(
+      `[ui] buildVoxelContext skipped: grid=${Boolean(grid)} clickPoint=${Boolean(clickPoint)}`
+    );
     return null;
   }
 
   const cell = getCellAtWorldPos(grid, clickPoint);
   const neighbors = cell ? getNeighborCells(grid, cell, 1) : [];
+  console.log(
+    `[ui] buildVoxelContext: cell=${cell ? cell.gridPos.join(",") : "none"} neighbors=${neighbors.length}`
+  );
   return buildClickContext(clickPoint, cell, neighbors);
 }
 
@@ -235,4 +263,22 @@ function normalizeScreenshotDataUrl(dataUrl: string): string {
   }
   const match = trimmed.match(/^data:image\/(?:png|jpeg|jpg|webp);base64,(.+)$/i);
   return match ? match[1] : trimmed;
+}
+
+function formatVec3OrNull(vec: THREE.Vector3 | null): string {
+  if (!vec) {
+    return "null";
+  }
+  return `[${vec.x.toFixed(3)}, ${vec.y.toFixed(3)}, ${vec.z.toFixed(3)}]`;
+}
+
+function summarizeOperations(
+  operations: Array<{ action: string; shapes: Array<{ type: string }> }>
+): string {
+  if (operations.length === 0) {
+    return "none";
+  }
+  return operations
+    .map((op, index) => `${index + 1}:${op.action}[${op.shapes.map((s) => s.type).join(",")}]`)
+    .join(" | ");
 }

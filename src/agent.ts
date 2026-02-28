@@ -341,6 +341,9 @@ export async function processCommand(
 
   let lastError: Error | null = null;
   const ai = new GoogleGenAI({ apiKey });
+  console.log(
+    `[agent] processCommand start command="${trimmedCommand}" click=${clickPosition ? formatVec3(clickPosition) : "null"} voxelChars=${voxelContext?.length ?? 0} manifestChars=${manifestSummary?.length ?? 0} screenshotBytes=${screenshotBase64?.length ?? 0}`
+  );
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
     const retrying = attempt > 0;
@@ -352,18 +355,27 @@ export async function processCommand(
         manifestSummary,
         retrying
       );
+      const contents = buildContents(userText, screenshotBase64);
+      const hasImage = Boolean(contents[0]?.parts.some((part) => "inlineData" in part));
+      console.log(
+        `[agent] Gemini request attempt=${attempt + 1}/${MAX_RETRIES + 1} model=${GEMINI_MODEL} hasImage=${hasImage} promptChars=${userText.length}`
+      );
 
       const response = await ai.models.generateContent({
         model: GEMINI_MODEL,
-        contents: buildContents(userText, screenshotBase64),
+        contents,
         config: {
           temperature: 0,
           maxOutputTokens: MAX_TOKENS,
           systemInstruction: SYSTEM_PROMPT,
         },
       });
+      console.log(
+        `[agent] Gemini response received candidates=${response.candidates?.length ?? 0} textChars=${response.text?.length ?? 0}`
+      );
 
       const text = extractTextFromGeminiResponse(response);
+      console.log(`[agent] Extracted response text chars=${text.length}`);
       const operations = parseAndValidateOperations(text, trimmedCommand);
 
       console.log(`[agent] Command: "${trimmedCommand}" → ${operations.length} operations`);
@@ -409,6 +421,9 @@ function buildContents(
       },
     });
   }
+  console.log(
+    `[agent] buildContents imageIncluded=${Boolean(normalizedImage)} imageBytes=${normalizedImage?.length ?? 0}`
+  );
   parts.push({ text: userText });
   return [{ role: "user", parts }];
 }
@@ -459,9 +474,11 @@ function buildUserText(
 
 function extractTextFromGeminiResponse(payload: GenerateContentResponse): string {
   if (typeof payload.text === "string" && payload.text.trim()) {
+    console.log("[agent] extractTextFromGeminiResponse using payload.text");
     return payload.text.trim();
   }
 
+  console.log("[agent] extractTextFromGeminiResponse falling back to candidate parts");
   const candidateTexts: string[] = [];
   for (const candidate of payload.candidates ?? []) {
     for (const part of candidate.content?.parts ?? []) {
@@ -496,15 +513,18 @@ function parseAndValidateOperations(
       candidates.push(stripped);
     }
   }
+  console.log(`[agent] parseAndValidateOperations parseCandidates=${candidates.length}`);
 
   let lastParseError: Error | null = null;
   for (const candidate of dedupeStrings(candidates)) {
     try {
+      console.log(`[agent] Attempting JSON parse candidateChars=${candidate.length}`);
       const parsed = JSON.parse(candidate) as unknown;
       return validateOperations(parsed, command);
     } catch (error) {
       lastParseError =
         error instanceof Error ? error : new Error(String(error));
+      console.warn(`[agent] JSON parse candidate failed: ${lastParseError.message}`);
     }
   }
 
@@ -517,6 +537,7 @@ function validateOperations(raw: unknown, command: string): EditOperation[] {
   if (!Array.isArray(raw)) {
     throw new Error("Gemini output is not a JSON array.");
   }
+  console.log(`[agent] Validating ${raw.length} operation(s)`);
 
   return raw.map((entry, index) => validateOperation(entry, index, command));
 }
@@ -547,6 +568,9 @@ function validateOperation(
   if (!Array.isArray(rawShapes) || rawShapes.length === 0) {
     throw new Error(`Operation ${index} must include non-empty shapes array.`);
   }
+  console.log(
+    `[agent] validateOperation #${index + 1}: action=${action} blend=${blendMode} shapes=${rawShapes.length}`
+  );
 
   const requestedBlendMode = blendMode as EditOperation["blendMode"];
   const normalizedBlendMode = canonicalBlendModeForAction(
