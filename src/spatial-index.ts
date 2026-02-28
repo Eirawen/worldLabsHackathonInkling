@@ -74,6 +74,30 @@ export function computeCroppedBounds(
   return { bounds, usedFallback: false };
 }
 
+export function transformBoundsToWorld(
+  localBounds: THREE.Box3,
+  matrixWorld: THREE.Matrix4
+): THREE.Box3 {
+  const worldBounds = new THREE.Box3();
+  const corners: THREE.Vector3[] = [
+    new THREE.Vector3(localBounds.min.x, localBounds.min.y, localBounds.min.z),
+    new THREE.Vector3(localBounds.min.x, localBounds.min.y, localBounds.max.z),
+    new THREE.Vector3(localBounds.min.x, localBounds.max.y, localBounds.min.z),
+    new THREE.Vector3(localBounds.min.x, localBounds.max.y, localBounds.max.z),
+    new THREE.Vector3(localBounds.max.x, localBounds.min.y, localBounds.min.z),
+    new THREE.Vector3(localBounds.max.x, localBounds.min.y, localBounds.max.z),
+    new THREE.Vector3(localBounds.max.x, localBounds.max.y, localBounds.min.z),
+    new THREE.Vector3(localBounds.max.x, localBounds.max.y, localBounds.max.z),
+  ];
+
+  for (const corner of corners) {
+    corner.applyMatrix4(matrixWorld);
+    worldBounds.expandByPoint(corner);
+  }
+
+  return worldBounds;
+}
+
 export function worldPosToGridCoord(
   worldPos: THREE.Vector3,
   gridBounds: THREE.Box3,
@@ -108,7 +132,14 @@ export function buildSpatialGrid(
   };
   const [rx, ry, rz] = config.resolution;
   const logPrefix = config.logPrefix;
-  const rawBounds = splatMesh.getBoundingBox();
+  if (typeof splatMesh.updateMatrixWorld === "function") {
+    splatMesh.updateMatrixWorld(true);
+  }
+  const matrixWorld =
+    (splatMesh as unknown as { matrixWorld?: THREE.Matrix4 }).matrixWorld?.clone() ??
+    new THREE.Matrix4().identity();
+  const localBounds = splatMesh.getBoundingBox();
+  const rawBounds = transformBoundsToWorld(localBounds, matrixWorld);
 
   if (isDegenerateBounds(rawBounds)) {
     console.warn(`${logPrefix} Degenerate bounding box; returning empty grid`);
@@ -127,6 +158,9 @@ export function buildSpatialGrid(
   if (usedFallback) {
     console.warn(`${logPrefix} Y-crop fallback to raw bounds (scene too small/degenerate)`);
   }
+  console.log(
+    `${logPrefix} Grid worldBounds: min=${croppedBounds.min.toArray()} max=${croppedBounds.max.toArray()}`
+  );
 
   const cellSize = computeNominalCellSize(croppedBounds, config.resolution);
   const nominalCellVolume = Math.max(cellSize.x * cellSize.y * cellSize.z, 1e-9);
@@ -135,11 +169,13 @@ export function buildSpatialGrid(
   let totalSplats = 0;
   let indexedSplats = 0;
   const start = nowMs();
+  const worldCenter = new THREE.Vector3();
 
   splatMesh.forEachSplat((index, center, _scales, _quat, _opacity, color) => {
     totalSplats += 1;
+    worldCenter.copy(center).applyMatrix4(matrixWorld);
 
-    const coord = worldPosToGridCoord(center, croppedBounds, config.resolution);
+    const coord = worldPosToGridCoord(worldCenter, croppedBounds, config.resolution);
     if (!coord) {
       return;
     }
@@ -154,8 +190,8 @@ export function buildSpatialGrid(
         sumPos: new THREE.Vector3(),
         sumColor: new THREE.Vector3(),
         sumColorSq: new THREE.Vector3(),
-        min: new THREE.Vector3(center.x, center.y, center.z),
-        max: new THREE.Vector3(center.x, center.y, center.z),
+        min: new THREE.Vector3(worldCenter.x, worldCenter.y, worldCenter.z),
+        max: new THREE.Vector3(worldCenter.x, worldCenter.y, worldCenter.z),
         splatIndices: [],
       };
       accumulators.set(key, acc);
@@ -163,21 +199,25 @@ export function buildSpatialGrid(
 
     indexedSplats += 1;
     acc.count += 1;
-    acc.sumPos.add(center);
+    acc.sumPos.add(worldCenter);
     acc.sumColor.x += color.r;
     acc.sumColor.y += color.g;
     acc.sumColor.z += color.b;
     acc.sumColorSq.x += color.r * color.r;
     acc.sumColorSq.y += color.g * color.g;
     acc.sumColorSq.z += color.b * color.b;
-    acc.min.min(center);
-    acc.max.max(center);
+    acc.min.min(worldCenter);
+    acc.max.max(worldCenter);
     acc.splatIndices.push(index);
   });
 
   const cells = new Map<string, VoxelCell>();
   for (const [key, acc] of accumulators) {
     cells.set(key, finalizeVoxelCell(acc, nominalCellVolume));
+  }
+  const firstCell = cells.values().next().value as VoxelCell | undefined;
+  if (firstCell) {
+    console.log(`${logPrefix} Sample cell center: ${firstCell.worldCenter.toArray()}`);
   }
 
   const elapsedMs = nowMs() - start;

@@ -39,7 +39,7 @@ const ENABLE_CLICK_SELECTION_HINTS =
   String(import.meta.env.VITE_ENABLE_CLICK_SELECTION_HINTS ?? "true").toLowerCase() !==
   "false";
 const CROP_SIZE_PX = 320;
-const MIN_SELECTION_CONFIDENCE = 0.15;
+const MIN_SELECTION_CONFIDENCE = 0.2;
 const DEFAULT_PROVIDER =
   String(import.meta.env.VITE_DEFAULT_LLM_PROVIDER ?? "gemini").toLowerCase() === "openai"
     ? "openai"

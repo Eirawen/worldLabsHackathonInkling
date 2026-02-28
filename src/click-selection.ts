@@ -31,7 +31,7 @@ const DEFAULT_OPTIONS: Required<SelectionOptions> = {
   maxDepth: 5,
   maxClusterCells: 120,
   minClusterCells: 2,
-  boxPadding: 1.18,
+  boxPadding: 1.14,
 };
 
 type QueueItem = {
@@ -129,12 +129,31 @@ export function buildLocalSelection(
   const halfX = Math.max(0.05, size.x * 0.5 * config.boxPadding);
   const halfY = Math.max(0.05, size.y * 0.5 * config.boxPadding);
   const halfZ = Math.max(0.05, size.z * 0.5 * config.boxPadding);
+  const maxDim = Math.max(size.x, size.y, size.z);
+  const minDim = Math.max(Math.min(size.x, size.y, size.z), 0.001);
+  const aspectRatio = maxDim / minDim;
 
-  const suggestedShape: SDFShapeConfig = {
-    type: "BOX",
-    position: [weightedCenter.x, weightedCenter.y, weightedCenter.z],
-    scale: [halfX, halfY, halfZ],
-  };
+  let suggestedShape: SDFShapeConfig;
+  if (aspectRatio < 1.6) {
+    const avgRadius = ((size.x + size.y + size.z) / 6) * config.boxPadding;
+    suggestedShape = {
+      type: "SPHERE",
+      position: [weightedCenter.x, weightedCenter.y, weightedCenter.z],
+      radius: Math.max(0.05, avgRadius),
+    };
+  } else if (size.y > size.x * 1.8 && size.y > size.z * 1.8) {
+    suggestedShape = {
+      type: "ELLIPSOID",
+      position: [weightedCenter.x, weightedCenter.y, weightedCenter.z],
+      scale: [halfX, halfY, halfZ],
+    };
+  } else {
+    suggestedShape = {
+      type: "BOX",
+      position: [weightedCenter.x, weightedCenter.y, weightedCenter.z],
+      scale: [halfX, halfY, halfZ],
+    };
+  }
 
   const confidence = clamp(
     1 - avgColorDistance / Math.max(1e-4, config.colorDistanceThreshold),
@@ -165,7 +184,7 @@ export function buildLocalSelection(
 export function formatSelectionHint(result: SelectionResult): string {
   const size = new THREE.Vector3();
   result.clusterBounds.getSize(size);
-  const scale = result.suggestedShape.scale ?? [0, 0, 0];
+  const shapeLine = describeSuggestedShape(result.suggestedShape);
 
   return [
     "Selection hints (deterministic click-seeded cluster):",
@@ -173,10 +192,20 @@ export function formatSelectionHint(result: SelectionResult): string {
     `- clusterCells=${result.clusterCellKeys.length} confidence=${result.confidence.toFixed(3)}`,
     `- clusterCenter=[${result.clusterCenter.x.toFixed(3)}, ${result.clusterCenter.y.toFixed(3)}, ${result.clusterCenter.z.toFixed(3)}]`,
     `- clusterSize=[${size.x.toFixed(3)}, ${size.y.toFixed(3)}, ${size.z.toFixed(3)}]`,
-    `- recommendedShape=BOX scale=[${scale[0].toFixed(3)}, ${scale[1].toFixed(3)}, ${scale[2].toFixed(3)}]`,
+    shapeLine,
     `- diagnostics visited=${result.diagnostics.visitedCells} rejected=${result.diagnostics.rejectedCells} reasons=${result.diagnostics.reason.join(",") || "none"}`,
-    "- Prefer this local cluster unless user explicitly requests a larger region.",
+    "- Use this cluster as a starting reference. Adjust shape type and size based on the visual context in the screenshot.",
   ].join("\n");
+}
+
+function describeSuggestedShape(shape: SDFShapeConfig): string {
+  if (shape.type === "SPHERE") {
+    return `- recommendedShape=SPHERE radius=${(shape.radius ?? 0).toFixed(3)}`;
+  }
+  if (shape.scale) {
+    return `- recommendedShape=${shape.type} scale=[${shape.scale[0].toFixed(3)}, ${shape.scale[1].toFixed(3)}, ${shape.scale[2].toFixed(3)}]`;
+  }
+  return `- recommendedShape=${shape.type}`;
 }
 
 function getFaceNeighbors(grid: SpatialGrid, cell: VoxelCell): VoxelCell[] {

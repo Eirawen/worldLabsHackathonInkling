@@ -843,6 +843,7 @@ function validateOperation(
   normalized.invert = typeof raw.invert === "boolean" ? raw.invert : undefined;
 
   if (normalized.action === "delete") {
+    normalized.invert = false;
     for (const shape of normalized.shapes) {
       shape.opacity = 0;
     }
