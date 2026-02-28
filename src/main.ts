@@ -9,6 +9,7 @@ import {
 import {
   addAsset,
   createPlacedAssetMesh,
+  ensureDefaultLibraryAsset,
   extractAssetFromDeleteOperation,
   getAssetById,
   listAssets,
@@ -59,6 +60,7 @@ async function bootstrap() {
   info?.replaceChildren(`Loading ${DEFAULT_SCENE_FILE}...`);
 
   const viewer = await initViewer(canvas, sceneUrl);
+  await ensureDefaultLibraryAsset();
 
   info?.replaceChildren(`Loaded ${DEFAULT_SCENE_FILE}`);
   console.log("[main] Viewer initialized");
