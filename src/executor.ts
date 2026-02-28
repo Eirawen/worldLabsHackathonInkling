@@ -12,7 +12,10 @@ type HistoryEntry = {
   addedParent: THREE.Object3D;
 };
 
+type AssetExtractionHandler = (op: EditOperation, parent: THREE.Object3D) => void;
+
 const history: HistoryEntry[] = [];
+let assetExtractionHandler: AssetExtractionHandler | null = null;
 
 const BLEND_MODE_MAP: Record<EditOperation["blendMode"], SplatEditRgbaBlendMode> = {
   MULTIPLY: SplatEditRgbaBlendMode.MULTIPLY,
@@ -39,6 +42,17 @@ export function executeOperations(
   console.log(`[executor] executeOperations called with ${ops.length} op(s)`);
 
   for (const [opIndex, op] of ops.entries()) {
+    if (op.action === "delete" && op.extractAsset && assetExtractionHandler) {
+      try {
+        console.log(
+          `[executor] Running asset extraction hook for delete op ${opIndex + 1}/${ops.length}`
+        );
+        assetExtractionHandler(op, parent);
+      } catch (error) {
+        console.error("[executor] Asset extraction hook failed", error);
+      }
+    }
+
     console.log(
       `[executor] Op ${opIndex + 1}/${ops.length}: action=${op.action} blend=${op.blendMode} shapes=${op.shapes.length} softEdge=${op.softEdge ?? "default"} sdfSmooth=${op.sdfSmooth ?? "default"} invert=${op.invert ?? false}`
     );
@@ -103,6 +117,15 @@ export function executeOperations(
   }
 
   return applied;
+}
+
+export function setAssetExtractionHandler(
+  handler: AssetExtractionHandler | null
+): void {
+  assetExtractionHandler = handler;
+  console.log(
+    `[executor] Asset extraction handler ${handler ? "registered" : "cleared"}`
+  );
 }
 
 export function undoLastEdit(): boolean {

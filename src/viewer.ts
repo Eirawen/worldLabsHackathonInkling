@@ -417,3 +417,56 @@ export function getScreenshot(): string {
   renderer.render(scene, camera);
   return renderer.domElement.toDataURL("image/png");
 }
+
+export function getScreenshotCropAroundPoint(
+  point: THREE.Vector3,
+  sizePx: number = 320
+): string | null {
+  renderer.render(scene, camera);
+
+  const ndc = point.clone().project(camera);
+  if (!Number.isFinite(ndc.x) || !Number.isFinite(ndc.y) || !Number.isFinite(ndc.z)) {
+    console.warn("[viewer] Crop failed: projected point is non-finite");
+    return null;
+  }
+  if (ndc.z < -1 || ndc.z > 1) {
+    console.warn(
+      `[viewer] Crop skipped: point outside clip depth (z=${ndc.z.toFixed(3)})`
+    );
+    return null;
+  }
+
+  const sourceCanvas = renderer.domElement;
+  const width = sourceCanvas.width;
+  const height = sourceCanvas.height;
+  if (width <= 0 || height <= 0) {
+    console.warn("[viewer] Crop failed: renderer canvas has invalid dimensions");
+    return null;
+  }
+
+  const cx = Math.round((ndc.x * 0.5 + 0.5) * width);
+  const cy = Math.round((-ndc.y * 0.5 + 0.5) * height);
+  const cropSize = Math.max(32, Math.min(Math.round(sizePx), Math.min(width, height)));
+  const half = Math.floor(cropSize / 2);
+
+  let sx = cx - half;
+  let sy = cy - half;
+  sx = THREE.MathUtils.clamp(sx, 0, Math.max(0, width - cropSize));
+  sy = THREE.MathUtils.clamp(sy, 0, Math.max(0, height - cropSize));
+
+  const cropCanvas = document.createElement("canvas");
+  cropCanvas.width = cropSize;
+  cropCanvas.height = cropSize;
+  const ctx = cropCanvas.getContext("2d");
+  if (!ctx) {
+    console.warn("[viewer] Crop failed: 2D context unavailable");
+    return null;
+  }
+
+  ctx.drawImage(sourceCanvas, sx, sy, cropSize, cropSize, 0, 0, cropSize, cropSize);
+  const result = cropCanvas.toDataURL("image/png");
+  console.log(
+    `[viewer] Crop generated center=(${cx},${cy}) rect=(${sx},${sy},${cropSize},${cropSize}) bytes=${result.length}`
+  );
+  return result;
+}

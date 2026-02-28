@@ -1,6 +1,18 @@
 import * as THREE from "three";
+import type { SplatMesh } from "@sparkjsdev/spark";
 import { processCommand } from "./agent";
-import { executeOperations, undoLastEdit } from "./executor";
+import {
+  executeOperations,
+  setAssetExtractionHandler,
+  undoLastEdit,
+} from "./executor";
+import {
+  addAsset,
+  createPlacedAssetMesh,
+  extractAssetFromDeleteOperation,
+  getAssetById,
+  listAssets,
+} from "./asset-library";
 import { generateManifest, getManifestJSON } from "./scene-manifest";
 import {
   buildSpatialGrid,
@@ -10,7 +22,12 @@ import {
 } from "./spatial-index";
 import type { SceneManifest, SpatialGrid } from "./types";
 import { initUI } from "./ui";
-import { getScreenshot, initViewer, onSplatClick } from "./viewer";
+import {
+  getScreenshot,
+  getScreenshotCropAroundPoint,
+  initViewer,
+  onSplatClick,
+} from "./viewer";
 
 const DEFAULT_SCENE_FILE = "elegant_library_with_fireplace_500k.spz";
 
@@ -84,15 +101,35 @@ async function bootstrap() {
     }
   });
 
+  setAssetExtractionHandler((op, parent) => {
+    const extractionMesh = resolveSplatMesh(parent, viewer.splatMesh);
+    const asset = extractAssetFromDeleteOperation(op, extractionMesh, DEFAULT_SCENE_FILE);
+    if (!asset) {
+      console.log("[main] No asset extracted for current delete operation");
+      return;
+    }
+
+    addAsset(asset);
+    console.log(
+      `[main] Asset saved id=${asset.id} label=\"${asset.label}\" splats=${asset.splatCount}`
+    );
+  });
+
   initUI({
     processCommand,
     executeOperations,
     undoLastEdit,
     getSplatMesh: () => viewer.splatMesh,
     getScreenshot,
+    getScreenshotCropAroundPoint,
     getGrid,
     getManifest,
     getLastClickPoint,
+    onSplatClick,
+    listAssets,
+    getAssetById,
+    createPlacedAssetMesh,
+    getPlacementParent: () => viewer.scene,
   });
 
   window.addEventListener("keydown", (event) => {
@@ -100,6 +137,31 @@ async function bootstrap() {
       console.log("[main] Last clicked point:", lastClickPoint.toArray());
     }
   });
+}
+
+function resolveSplatMesh(parent: THREE.Object3D, fallback: SplatMesh): SplatMesh {
+  if (looksLikeSplatMesh(parent)) {
+    return parent;
+  }
+
+  let current: THREE.Object3D | null = parent.parent;
+  while (current) {
+    if (looksLikeSplatMesh(current)) {
+      return current;
+    }
+    current = current.parent;
+  }
+
+  return fallback;
+}
+
+function looksLikeSplatMesh(obj: unknown): obj is SplatMesh {
+  return (
+    typeof obj === "object" &&
+    obj !== null &&
+    typeof (obj as SplatMesh).forEachSplat === "function" &&
+    typeof (obj as SplatMesh).getBoundingBox === "function"
+  );
 }
 
 bootstrap().catch((error) => {
