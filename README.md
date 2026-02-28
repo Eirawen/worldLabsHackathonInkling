@@ -31,7 +31,7 @@ Marble Muse adds a **real-time editing layer** that operates directly on Marble'
 - *"Add a spotlight on the fountain."* → Volumetric light cone appears.
 - *"Take that lamppost and save it."* → Extracted to your asset library for reuse in any scene.
 
-No regeneration. No waiting. 60fps in the browser.
+No regeneration. 60fps in the browser.
 
 ## How It Works
 
@@ -136,23 +136,11 @@ marble-muse/
 
 ---
 
-## Demo Script (60 seconds)
-
-1. **[0:00]** Open the app. A Marble-generated city scene loads in the browser.
-2. **[0:10]** Click on a parked car. Type: *"Remove this."* Car vanishes instantly. "The car is now in our asset library."
-3. **[0:20]** Type: *"Make this a golden hour scene."* Warm orange light washes over the entire world via compound SDF lighting edits.
-4. **[0:30]** Click on a building. Type: *"Make this red brick."* Building facade recolors in real-time.
-5. **[0:40]** Open the asset library sidebar. Click the extracted car. Click a spot in a SECOND Marble scene loaded in a tab. Car appears in the new scene.
-6. **[0:50]** *"Marble generates worlds in 6 minutes. We make them editable in real-time, through conversation, in the browser. Every edit builds your library. Every world makes the next one richer."*
-7. **[0:60]** Title card: **Marble Muse — The World That Listens.**
-
----
 
 ## Key Insight
 
 Marble's gaussian splats are data, not pixels. Spark exposes that data through a programmable SDF editing pipeline that runs on the GPU. By placing an LLM between the user's intent and Spark's SDF system, we turn natural language into spatial operations — and we do it at 60fps with zero regeneration.
 
-**We didn't build a project. We built the editing layer Marble needs to ship next.**
 
 ---
 
