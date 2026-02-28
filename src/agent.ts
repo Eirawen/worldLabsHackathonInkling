@@ -10,6 +10,7 @@ const MAX_RETRIES = 1;
 const MAX_TOKENS = 4096;
 const MARKDOWN_JSON_REGEX = /```json?\s*([\s\S]*?)```/i;
 let pendingSecondaryScreenshotBase64: string | null = null;
+let providerPreference: "gemini" | "openai" = "gemini";
 
 const ACTIONS = new Set<EditOperation["action"]>([
   "delete",
@@ -353,7 +354,8 @@ export async function processCommand(
 
   let lastError: Error | null = null;
 
-  if (geminiApiKey) {
+  const preferOpenAI = providerPreference === "openai";
+  if (geminiApiKey && !preferOpenAI) {
     const ai = new GoogleGenAI({ apiKey: geminiApiKey });
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
       const retrying = attempt > 0;
@@ -415,9 +417,11 @@ export async function processCommand(
   }
 
   const shouldFallback = shouldUseOpenAIFallback(geminiApiKey, lastError);
-  if (openAIApiKey && shouldFallback) {
+  if (openAIApiKey && (preferOpenAI || shouldFallback)) {
     console.warn(
-      `[agent] Falling back to OpenAI model=${OPENAI_FALLBACK_MODEL} after Gemini failure`
+      preferOpenAI
+        ? `[agent] Using OpenAI by preference model=${OPENAI_FALLBACK_MODEL}`
+        : `[agent] Falling back to OpenAI model=${OPENAI_FALLBACK_MODEL} after Gemini failure`
     );
     try {
       const userText = buildUserText(
@@ -445,7 +449,7 @@ export async function processCommand(
       lastError = new Error(message);
       console.error(`[agent] OpenAI fallback failed: ${message}`);
     }
-  } else if (openAIApiKey && geminiApiKey && lastError) {
+  } else if (openAIApiKey && geminiApiKey && lastError && !preferOpenAI) {
     console.warn(
       `[agent] OpenAI fallback skipped: non-transient Gemini failure (${lastError.message})`
     );
@@ -551,6 +555,11 @@ export function setSecondaryScreenshotForNextCommand(
   console.log(
     `[agent] setSecondaryScreenshotForNextCommand bytes=${pendingSecondaryScreenshotBase64?.length ?? 0}`
   );
+}
+
+export function setProviderPreference(preference: "gemini" | "openai"): void {
+  providerPreference = preference;
+  console.log(`[agent] Provider preference set to ${providerPreference}`);
 }
 
 async function requestOpenAIText(

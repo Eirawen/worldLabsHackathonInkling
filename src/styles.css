@@ -95,7 +95,8 @@ html, body {
 }
 
 #muse-send-btn,
-#muse-undo-btn {
+#muse-undo-btn,
+#muse-provider-btn {
   border: 0;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.16);
@@ -107,12 +108,14 @@ html, body {
 }
 
 #muse-send-btn:hover,
-#muse-undo-btn:hover {
+#muse-undo-btn:hover,
+#muse-provider-btn:hover {
   background: rgba(255, 255, 255, 0.24);
 }
 
 #muse-send-btn:disabled,
 #muse-undo-btn:disabled,
+#muse-provider-btn:disabled,
 #muse-input:disabled {
   opacity: 0.6;
   cursor: not-allowed;
@@ -240,7 +243,8 @@ html, body {
   }
 
   #muse-send-btn,
-  #muse-undo-btn {
+  #muse-undo-btn,
+  #muse-provider-btn {
     padding: 9px 10px;
     min-width: 36px;
   }
