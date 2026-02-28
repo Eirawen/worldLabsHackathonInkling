@@ -1,0 +1,810 @@
+import * as THREE from "three";
+import type { EditOperation, SDFShapeConfig, VoxelCell } from "./types";
+
+const CLAUDE_MODEL = "claude-sonnet-4-20250514";
+const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
+const MAX_RETRIES = 1;
+const MAX_TOKENS = 4096;
+const MARKDOWN_JSON_REGEX = /```json?\s*([\s\S]*?)```/i;
+
+const ACTIONS = new Set<EditOperation["action"]>([
+  "delete",
+  "recolor",
+  "light",
+  "darken",
+  "atmosphere",
+]);
+const BLEND_MODES = new Set<EditOperation["blendMode"]>([
+  "MULTIPLY",
+  "SET_RGB",
+  "ADD_RGBA",
+]);
+const SHAPE_TYPES = new Set<SDFShapeConfig["type"]>([
+  "SPHERE",
+  "BOX",
+  "ELLIPSOID",
+  "CYLINDER",
+  "CAPSULE",
+  "PLANE",
+  "INFINITE_CONE",
+  "ALL",
+]);
+
+const SYSTEM_PROMPT = `You are a spatial editing assistant for 3D gaussian splat worlds rendered with Spark.
+
+You output structured edit operations for Spark SplatEdit SDF.
+
+Coordinate system:
+- Right-handed, Y-up.
+- All positions, scale values, and softEdge values are world-space units.
+- Use click position and provided bounds/cell dimensions as the anchor for shape placement and sizing.
+
+Available SDF shape types and usage:
+1) SPHERE
+- Best for point deletions, trees, bushes, round objects.
+- Required params: position, radius.
+
+2) BOX
+- Best for buildings, walls, vehicles, road segments, rectangular regions.
+- Required params: position, scale.
+- scale is half-extents in world units [xHalf, yHalf, zHalf].
+
+3) ELLIPSOID
+- Best for elongated organic forms, non-uniform rounded objects.
+- Required params: position, scale.
+- scale is radii per axis [rx, ry, rz].
+
+4) CYLINDER
+- Best for poles, trunks, pillars, columns.
+- Required params: position, scale.
+- Use scale.x and scale.z as radius controls, scale.y as half-height.
+
+5) CAPSULE
+- Best for rounded cylinders and trunk-like forms with smooth ends.
+- Params: position, scale, optional radius.
+
+6) PLANE
+- Best for ground/sky splits and wide directional effects.
+- Params: position, rotation.
+- rotation quaternion defines normal direction.
+
+7) INFINITE_CONE
+- Best for spotlights and directional cone effects.
+- Params: position, rotation, radius.
+- radius controls cone angle/falloff.
+
+8) ALL
+- Best for global full-scene effects.
+- Params: position (use [0,0,0] unless a specific anchor is provided).
+
+Blend modes and exact behavior:
+- MULTIPLY + opacity: 0 => DELETE (splats become invisible)
+- MULTIPLY + color [0.3, 0.3, 0.3] => DARKEN
+- SET_RGB + color => RECOLOR (override RGB, keep alpha)
+- ADD_RGBA + color => ADD LIGHT / atmospheric additive tint
+
+softEdge:
+- Feathers shape boundaries in world-space units.
+- Always use softEdge > 0 for natural results.
+- Typical range: 0.05 to 0.3.
+- Use around 0.1 for local deletes/recolors.
+- Use around 0.2 for lighting/atmosphere.
+
+sdfSmooth:
+- Smoothly blends multiple SDF shapes in a single edit.
+- Use for compound objects (example: tree canopy + trunk).
+
+extractAsset rule:
+- For every delete action, always set extractAsset: true.
+- Also include a descriptive assetLabel.
+
+Geometry selection heuristics:
+- Use bounding box dimensions and color data to size and choose shapes.
+- If bounding box is taller than wide, prefer CYLINDER or ELLIPSOID over SPHERE.
+- For buildings/structures, prefer BOX.
+- For organic shapes (trees/bushes), prefer SPHERE or SPHERE+CYLINDER compound.
+- For flat/wide vehicles, roads, facades, prefer BOX.
+- Size shapes to object dimensions from context. Do not under-size edits.
+
+Response format requirements:
+- Return ONLY a JSON array of EditOperation objects.
+- No prose, no markdown, no explanations, no code fences.
+- Compound targets should use multiple shapes in one operation when needed.
+
+Examples (command -> JSON):
+
+Example A: "Remove this tree" with click [3.2,1.0,-2.1], bbox approx width 2.2, height 3.0, depth 2.0
+[
+  {
+    "action": "delete",
+    "blendMode": "MULTIPLY",
+    "softEdge": 0.1,
+    "extractAsset": true,
+    "assetLabel": "tree",
+    "shapes": [
+      { "type": "SPHERE", "position": [3.2, 2.1, -2.1], "radius": 1.5, "opacity": 0.0 }
+    ]
+  }
+]
+
+Example B: "Make this building red" with click [8.0,2.5,4.0], bbox approx 6x5x4
+[
+  {
+    "action": "recolor",
+    "blendMode": "SET_RGB",
+    "softEdge": 0.1,
+    "shapes": [
+      {
+        "type": "BOX",
+        "position": [8.0, 2.5, 4.0],
+        "scale": [3.0, 2.5, 2.0],
+        "color": [0.75, 0.18, 0.14],
+        "opacity": 1.0
+      }
+    ]
+  }
+]
+
+Example C: "Add warm sunset lighting" (global)
+[
+  {
+    "action": "light",
+    "blendMode": "ADD_RGBA",
+    "softEdge": 0.25,
+    "shapes": [
+      { "type": "PLANE", "position": [0, 1.0, 0], "rotation": [0, 0, 0, 1], "color": [0.24, 0.14, 0.06], "opacity": 0.0 },
+      { "type": "SPHERE", "position": [0, 5.0, -8.0], "radius": 20.0, "color": [0.28, 0.16, 0.08], "opacity": 0.0 }
+    ]
+  }
+]
+
+Example D: "Create a spotlight on the fountain" with click [1.5,0.8,3.2]
+[
+  {
+    "action": "light",
+    "blendMode": "ADD_RGBA",
+    "softEdge": 0.22,
+    "shapes": [
+      {
+        "type": "INFINITE_CONE",
+        "position": [1.5, 4.5, 3.2],
+        "rotation": [0.7071, 0, 0, 0.7071],
+        "radius": 0.45,
+        "color": [0.22, 0.19, 0.12],
+        "opacity": 0.0
+      }
+    ]
+  }
+]
+
+Example E: "Make the shadows deeper"
+[
+  {
+    "action": "darken",
+    "blendMode": "MULTIPLY",
+    "softEdge": 0.2,
+    "shapes": [
+      {
+        "type": "PLANE",
+        "position": [0, 0.3, 0],
+        "rotation": [0, 0, 0, 1],
+        "color": [0.35, 0.35, 0.4],
+        "opacity": 1.0
+      }
+    ]
+  }
+]
+
+Example F: "Autumn foliage"
+[
+  {
+    "action": "recolor",
+    "blendMode": "SET_RGB",
+    "softEdge": 0.14,
+    "shapes": [
+      { "type": "ELLIPSOID", "position": [4.0, 2.2, -1.5], "scale": [1.8, 1.6, 1.4], "color": [0.78, 0.38, 0.12], "opacity": 1.0 },
+      { "type": "ELLIPSOID", "position": [7.2, 2.6, -3.1], "scale": [2.0, 1.8, 1.6], "color": [0.68, 0.24, 0.10], "opacity": 1.0 }
+    ]
+  }
+]
+
+Example G: "Remove the car" with click [6.0,0.9,-4.0], bbox approx width 3.8, height 1.4, depth 1.7
+[
+  {
+    "action": "delete",
+    "blendMode": "MULTIPLY",
+    "softEdge": 0.08,
+    "extractAsset": true,
+    "assetLabel": "car",
+    "shapes": [
+      { "type": "BOX", "position": [6.0, 0.9, -4.0], "scale": [1.9, 0.7, 0.85], "opacity": 0.0 }
+    ]
+  }
+]
+
+Example H: "Make everything foggy"
+[
+  {
+    "action": "atmosphere",
+    "blendMode": "ADD_RGBA",
+    "softEdge": 0.3,
+    "shapes": [
+      { "type": "ALL", "position": [0, 0, 0], "color": [0.08, 0.08, 0.08], "opacity": 0.0 }
+    ]
+  }
+]
+
+Example I: "Remove that large tree" with click [2.8,1.1,-6.2], bbox approx width 3.0, height 6.0, depth 2.8
+[
+  {
+    "action": "delete",
+    "blendMode": "MULTIPLY",
+    "softEdge": 0.1,
+    "sdfSmooth": 0.2,
+    "extractAsset": true,
+    "assetLabel": "large tree",
+    "shapes": [
+      { "type": "SPHERE", "position": [2.8, 3.7, -6.2], "radius": 1.6, "opacity": 0.0 },
+      { "type": "CYLINDER", "position": [2.8, 1.6, -6.2], "scale": [0.35, 1.6, 0.35], "opacity": 0.0 }
+    ]
+  }
+]
+
+Example J: "Clear the road" with road center [0,0.2,5], road size approx length 20, width 3, thickness 0.5
+[
+  {
+    "action": "delete",
+    "blendMode": "MULTIPLY",
+    "softEdge": 0.08,
+    "extractAsset": true,
+    "assetLabel": "road clutter",
+    "shapes": [
+      { "type": "BOX", "position": [0, 0.2, 5], "scale": [10.0, 0.25, 1.5], "opacity": 0.0 }
+    ]
+  }
+]`;
+
+type AnthropicTextBlock = {
+  type: "text";
+  text: string;
+};
+
+type AnthropicImageBlock = {
+  type: "image";
+  source: {
+    type: "base64";
+    media_type: "image/png";
+    data: string;
+  };
+};
+
+type AnthropicContentBlock = AnthropicTextBlock | AnthropicImageBlock;
+
+type AnthropicResponse = {
+  id?: string;
+  type?: string;
+  role?: string;
+  content?: Array<{ type?: string; text?: string }>;
+  error?: { type?: string; message?: string };
+};
+
+export function buildClickContext(
+  clickPos: THREE.Vector3,
+  cell: VoxelCell | null,
+  neighbors: VoxelCell[]
+): string {
+  const lines: string[] = [];
+  lines.push(`Click position: ${formatVec3(clickPos)}`);
+
+  if (!cell) {
+    lines.push("Primary cell: none (click outside indexed occupied cells).");
+    if (neighbors.length > 0) {
+      lines.push(
+        `Nearby occupied cells available: ${neighbors.length} (primary cell missing).`
+      );
+    } else {
+      lines.push("Nearby occupied cells: none.");
+    }
+    return lines.join("\n");
+  }
+
+  const boundsSize = new THREE.Vector3();
+  cell.worldBounds.getSize(boundsSize);
+
+  lines.push(
+    `Primary cell: key=${gridPosKey(cell.gridPos)} center=${formatVec3(cell.worldCenter)} splats=${cell.splatCount} density=${cell.density.toFixed(3)}`
+  );
+  lines.push(
+    `Primary cell bounds: min=${formatVec3(cell.worldBounds.min)} max=${formatVec3(cell.worldBounds.max)} size=${formatVec3(boundsSize)}`
+  );
+  lines.push(
+    `Primary color stats: avg=${formatColor(cell.avgColor)} variance=${cell.colorVariance.toFixed(4)}`
+  );
+
+  const nearestNeighbors = neighbors
+    .filter((neighbor) => gridPosKey(neighbor.gridPos) !== gridPosKey(cell.gridPos))
+    .map((neighbor) => ({
+      cell: neighbor,
+      dist: neighbor.worldCenter.distanceTo(clickPos),
+    }))
+    .sort((a, b) => a.dist - b.dist)
+    .slice(0, 6);
+
+  if (nearestNeighbors.length === 0) {
+    lines.push("Neighbor cells: none.");
+    return lines.join("\n");
+  }
+
+  lines.push("Neighbor cells (nearest first):");
+  for (const { cell: neighbor, dist } of nearestNeighbors) {
+    const size = new THREE.Vector3();
+    neighbor.worldBounds.getSize(size);
+    lines.push(
+      `- key=${gridPosKey(neighbor.gridPos)} dist=${dist.toFixed(2)} center=${formatVec3(neighbor.worldCenter)} size=${formatVec3(size)} splats=${neighbor.splatCount} avg=${formatColor(neighbor.avgColor)}`
+    );
+  }
+
+  return lines.join("\n");
+}
+
+export async function processCommand(
+  command: string,
+  clickPosition: THREE.Vector3 | null,
+  voxelContext: string | null,
+  manifestSummary: string | null,
+  screenshotBase64: string | null,
+  apiKey: string
+): Promise<EditOperation[]> {
+  const trimmedCommand = command.trim();
+  if (!trimmedCommand) {
+    throw new Error("[agent] ERROR: command is empty");
+  }
+  if (!apiKey.trim()) {
+    throw new Error("[agent] ERROR: missing Anthropic API key");
+  }
+
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
+    const retrying = attempt > 0;
+    try {
+      const userText = buildUserText(
+        trimmedCommand,
+        clickPosition,
+        voxelContext,
+        manifestSummary,
+        retrying
+      );
+
+      const response = await fetch(ANTHROPIC_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true",
+        },
+        body: JSON.stringify({
+          model: CLAUDE_MODEL,
+          max_tokens: MAX_TOKENS,
+          temperature: 0,
+          system: SYSTEM_PROMPT,
+          messages: [
+            {
+              role: "user",
+              content: buildContentBlocks(userText, screenshotBase64),
+            },
+          ],
+        }),
+      });
+
+      if (!response.ok) {
+        const bodySnippet = (await safeReadText(response)).slice(0, 400);
+        throw new Error(
+          `Claude API HTTP ${response.status} ${response.statusText}. Body: ${bodySnippet}`
+        );
+      }
+
+      const payload = (await response.json()) as AnthropicResponse;
+      const text = extractTextFromAnthropicResponse(payload);
+      const operations = parseAndValidateOperations(text, trimmedCommand);
+
+      console.log(`[agent] Command: "${trimmedCommand}" → ${operations.length} operations`);
+      return operations;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      lastError = new Error(message);
+
+      if (attempt < MAX_RETRIES) {
+        console.warn(
+          `[agent] Retry ${attempt + 1}/${MAX_RETRIES} for command "${trimmedCommand}" due to: ${message}`
+        );
+        continue;
+      }
+
+      console.error(`[agent] ERROR: ${message}`);
+    }
+  }
+
+  throw lastError ?? new Error("[agent] ERROR: unknown processing failure");
+}
+
+function buildContentBlocks(
+  userText: string,
+  screenshotBase64: string | null
+): AnthropicContentBlock[] {
+  const blocks: AnthropicContentBlock[] = [];
+  const normalizedImage = normalizeScreenshotBase64(screenshotBase64);
+  if (normalizedImage) {
+    blocks.push({
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: "image/png",
+        data: normalizedImage,
+      },
+    });
+  }
+  blocks.push({ type: "text", text: userText });
+  return blocks;
+}
+
+function buildUserText(
+  command: string,
+  clickPosition: THREE.Vector3 | null,
+  voxelContext: string | null,
+  manifestSummary: string | null,
+  simplifyForRetry: boolean
+): string {
+  const lines: string[] = [];
+
+  if (manifestSummary?.trim()) {
+    lines.push("Scene summary:");
+    lines.push(manifestSummary.trim());
+    lines.push("");
+  }
+
+  if (clickPosition) {
+    lines.push(`Click world position: ${formatVec3(clickPosition)}`);
+    if (voxelContext?.trim()) {
+      lines.push("Voxel context near click:");
+      lines.push(voxelContext.trim());
+    } else {
+      lines.push("Voxel context near click: not provided.");
+    }
+    lines.push("");
+  } else if (voxelContext?.trim()) {
+    lines.push("Voxel context:");
+    lines.push(voxelContext.trim());
+    lines.push("");
+  }
+
+  lines.push("Output requirements:");
+  lines.push("- Return only a valid JSON array of EditOperation objects.");
+  lines.push("- No markdown, no prose.");
+  if (simplifyForRetry) {
+    lines.push(
+      "- Return only valid JSON array of EditOperation objects. No markdown."
+    );
+  }
+  lines.push("");
+  lines.push(`User command: ${command}`);
+
+  return lines.join("\n");
+}
+
+function extractTextFromAnthropicResponse(payload: AnthropicResponse): string {
+  if (payload.error?.message) {
+    throw new Error(`Claude API error: ${payload.error.message}`);
+  }
+
+  const texts =
+    payload.content
+      ?.filter((block) => block.type === "text" && typeof block.text === "string")
+      .map((block) => block.text ?? "") ?? [];
+
+  const joined = texts.join("\n").trim();
+  if (!joined) {
+    throw new Error("Claude response contained no text content.");
+  }
+
+  return joined;
+}
+
+function parseAndValidateOperations(
+  responseText: string,
+  command: string
+): EditOperation[] {
+  const candidates: string[] = [];
+  const trimmed = responseText.trim();
+  if (trimmed) {
+    candidates.push(trimmed);
+  }
+
+  const markdownMatch = trimmed.match(MARKDOWN_JSON_REGEX);
+  if (markdownMatch?.[1]) {
+    const stripped = markdownMatch[1].trim();
+    if (stripped && stripped !== trimmed) {
+      candidates.push(stripped);
+    }
+  }
+
+  let lastParseError: Error | null = null;
+  for (const candidate of dedupeStrings(candidates)) {
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      return validateOperations(parsed, command);
+    } catch (error) {
+      lastParseError =
+        error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  throw new Error(
+    `Unable to parse Claude JSON response. ${lastParseError?.message ?? "No parse attempts succeeded."}`
+  );
+}
+
+function validateOperations(raw: unknown, command: string): EditOperation[] {
+  if (!Array.isArray(raw)) {
+    throw new Error("Claude output is not a JSON array.");
+  }
+
+  return raw.map((entry, index) => validateOperation(entry, index, command));
+}
+
+function validateOperation(
+  raw: unknown,
+  index: number,
+  command: string
+): EditOperation {
+  if (!isRecord(raw)) {
+    throw new Error(`Operation ${index} is not an object.`);
+  }
+
+  const action = raw.action;
+  if (typeof action !== "string" || !ACTIONS.has(action as EditOperation["action"])) {
+    throw new Error(`Operation ${index} has invalid action.`);
+  }
+
+  const blendMode = raw.blendMode;
+  if (
+    typeof blendMode !== "string" ||
+    !BLEND_MODES.has(blendMode as EditOperation["blendMode"])
+  ) {
+    throw new Error(`Operation ${index} has invalid blendMode.`);
+  }
+
+  const rawShapes = raw.shapes;
+  if (!Array.isArray(rawShapes) || rawShapes.length === 0) {
+    throw new Error(`Operation ${index} must include non-empty shapes array.`);
+  }
+
+  const requestedBlendMode = blendMode as EditOperation["blendMode"];
+  const normalizedBlendMode = canonicalBlendModeForAction(
+    action as EditOperation["action"],
+    requestedBlendMode
+  );
+  if (normalizedBlendMode !== requestedBlendMode) {
+    console.warn(
+      `[agent] Adjusted blendMode for action=${action} from ${requestedBlendMode} to ${normalizedBlendMode}`
+    );
+  }
+
+  const normalized: EditOperation = {
+    action: action as EditOperation["action"],
+    blendMode: normalizedBlendMode,
+    shapes: rawShapes.map((shape, shapeIndex) =>
+      validateShape(shape, index, shapeIndex)
+    ),
+  };
+
+  const softEdgeDefault =
+    normalized.action === "light" || normalized.action === "atmosphere"
+      ? 0.2
+      : 0.1;
+  normalized.softEdge = clampNumber(raw.softEdge, 0.001, 10, softEdgeDefault);
+  normalized.sdfSmooth = clampOptionalNumber(raw.sdfSmooth, 0, 10);
+  normalized.invert = typeof raw.invert === "boolean" ? raw.invert : undefined;
+
+  if (normalized.action === "delete") {
+    for (const shape of normalized.shapes) {
+      shape.opacity = 0;
+    }
+    normalized.extractAsset = true;
+    normalized.assetLabel = getDeleteAssetLabel(raw.assetLabel, command);
+  } else {
+    normalized.extractAsset =
+      typeof raw.extractAsset === "boolean" ? raw.extractAsset : undefined;
+    normalized.assetLabel =
+      typeof raw.assetLabel === "string" && raw.assetLabel.trim()
+        ? raw.assetLabel.trim()
+        : undefined;
+  }
+
+  return normalized;
+}
+
+function validateShape(
+  raw: unknown,
+  opIndex: number,
+  shapeIndex: number
+): SDFShapeConfig {
+  if (!isRecord(raw)) {
+    throw new Error(`Operation ${opIndex} shape ${shapeIndex} is not an object.`);
+  }
+
+  const type = raw.type;
+  if (typeof type !== "string" || !SHAPE_TYPES.has(type as SDFShapeConfig["type"])) {
+    throw new Error(`Operation ${opIndex} shape ${shapeIndex} has invalid type.`);
+  }
+
+  const position = toNumberTuple(raw.position, 3);
+  if (!position) {
+    throw new Error(`Operation ${opIndex} shape ${shapeIndex} has invalid position.`);
+  }
+
+  const shape: SDFShapeConfig = {
+    type: type as SDFShapeConfig["type"],
+    position: position as [number, number, number],
+  };
+
+  const rotation = toNumberTuple(raw.rotation, 4);
+  if (rotation) {
+    shape.rotation = rotation as [number, number, number, number];
+  }
+
+  if (typeof raw.radius === "number" && Number.isFinite(raw.radius)) {
+    shape.radius = Math.max(0, raw.radius);
+  }
+
+  const scale = toNumberTuple(raw.scale, 3);
+  if (scale) {
+    shape.scale = [
+      Math.max(0, scale[0]),
+      Math.max(0, scale[1]),
+      Math.max(0, scale[2]),
+    ];
+  }
+
+  const color = toNumberTuple(raw.color, 3);
+  if (color) {
+    shape.color = [
+      clamp(color[0], 0, 1),
+      clamp(color[1], 0, 1),
+      clamp(color[2], 0, 1),
+    ];
+  }
+
+  if (typeof raw.opacity === "number" && Number.isFinite(raw.opacity)) {
+    shape.opacity = clamp(raw.opacity, 0, 1);
+  }
+
+  const displace = toNumberTuple(raw.displace, 3);
+  if (displace) {
+    shape.displace = displace as [number, number, number];
+  }
+
+  return shape;
+}
+
+function getDeleteAssetLabel(rawLabel: unknown, command: string): string {
+  if (typeof rawLabel === "string" && rawLabel.trim()) {
+    return rawLabel.trim();
+  }
+  const compact = command
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .trim()
+    .replace(/\s+/g, " ");
+  if (!compact) {
+    return "extracted asset";
+  }
+  return compact.length > 48 ? `${compact.slice(0, 45)}...` : compact;
+}
+
+function toNumberTuple(value: unknown, length: number): number[] | null {
+  if (!Array.isArray(value) || value.length !== length) {
+    return null;
+  }
+  const out: number[] = [];
+  for (const item of value) {
+    if (typeof item !== "number" || !Number.isFinite(item)) {
+      return null;
+    }
+    out.push(item);
+  }
+  return out;
+}
+
+function clampOptionalNumber(
+  value: unknown,
+  min: number,
+  max: number
+): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+  return clamp(value, min, max);
+}
+
+function clampNumber(
+  value: unknown,
+  min: number,
+  max: number,
+  fallback: number
+): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return clamp(value, min, max);
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function dedupeStrings(values: string[]): string[] {
+  return Array.from(new Set(values));
+}
+
+function canonicalBlendModeForAction(
+  action: EditOperation["action"],
+  requestedBlendMode: EditOperation["blendMode"]
+): EditOperation["blendMode"] {
+  if (action === "delete") {
+    return "MULTIPLY";
+  }
+  if (action === "recolor") {
+    return "SET_RGB";
+  }
+  if (action === "darken") {
+    return "MULTIPLY";
+  }
+  if (action === "light") {
+    return "ADD_RGBA";
+  }
+  return requestedBlendMode;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function normalizeScreenshotBase64(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const dataUrlMatch = trimmed.match(/^data:image\/(?:png|jpeg|jpg|webp);base64,(.+)$/i);
+  const base64 = dataUrlMatch ? dataUrlMatch[1] : trimmed;
+  const compact = base64.replace(/\s+/g, "");
+  return compact || null;
+}
+
+function gridPosKey(gridPos: [number, number, number]): string {
+  return `${gridPos[0]},${gridPos[1]},${gridPos[2]}`;
+}
+
+function formatVec3(vec: THREE.Vector3): string {
+  return `[${vec.x.toFixed(3)}, ${vec.y.toFixed(3)}, ${vec.z.toFixed(3)}]`;
+}
+
+function formatColor(color: THREE.Color): string {
+  return `[${color.r.toFixed(3)}, ${color.g.toFixed(3)}, ${color.b.toFixed(3)}]`;
+}
+
+async function safeReadText(response: Response): Promise<string> {
+  try {
+    return await response.text();
+  } catch {
+    return "";
+  }
+}
+
+export { SYSTEM_PROMPT };
