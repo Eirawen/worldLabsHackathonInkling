@@ -1,4 +1,4 @@
-# Marble Muse — The World That Listens
+# Inkling, Agentic editing of Marble Worlds in real time with multimodal models.
 
 > Generate once with Marble. Edit forever through conversation. Every world you touch makes every future world richer.
 
