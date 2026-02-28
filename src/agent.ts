@@ -1,8 +1,8 @@
+import { GoogleGenAI, type GenerateContentResponse } from "@google/genai";
 import * as THREE from "three";
 import type { EditOperation, SDFShapeConfig, VoxelCell } from "./types";
 
-const CLAUDE_MODEL = "claude-sonnet-4-20250514";
-const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
+const GEMINI_MODEL = "gemini-3-flash-preview";
 const MAX_RETRIES = 1;
 const MAX_TOKENS = 4096;
 const MARKDOWN_JSON_REGEX = /```json?\s*([\s\S]*?)```/i;
@@ -264,30 +264,6 @@ Example J: "Clear the road" with road center [0,0.2,5], road size approx length 
   }
 ]`;
 
-type AnthropicTextBlock = {
-  type: "text";
-  text: string;
-};
-
-type AnthropicImageBlock = {
-  type: "image";
-  source: {
-    type: "base64";
-    media_type: "image/png";
-    data: string;
-  };
-};
-
-type AnthropicContentBlock = AnthropicTextBlock | AnthropicImageBlock;
-
-type AnthropicResponse = {
-  id?: string;
-  type?: string;
-  role?: string;
-  content?: Array<{ type?: string; text?: string }>;
-  error?: { type?: string; message?: string };
-};
-
 export function buildClickContext(
   clickPos: THREE.Vector3,
   cell: VoxelCell | null,
@@ -360,10 +336,14 @@ export async function processCommand(
     throw new Error("[agent] ERROR: command is empty");
   }
   if (!apiKey.trim()) {
-    throw new Error("[agent] ERROR: missing Anthropic API key");
+    throw new Error("[agent] ERROR: missing Gemini API key");
   }
 
   let lastError: Error | null = null;
+  const ai = new GoogleGenAI({ apiKey });
+  console.log(
+    `[agent] processCommand start command="${trimmedCommand}" click=${clickPosition ? formatVec3(clickPosition) : "null"} voxelChars=${voxelContext?.length ?? 0} manifestChars=${manifestSummary?.length ?? 0} screenshotBytes=${screenshotBase64?.length ?? 0}`
+  );
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
     const retrying = attempt > 0;
@@ -375,38 +355,27 @@ export async function processCommand(
         manifestSummary,
         retrying
       );
+      const contents = buildContents(userText, screenshotBase64);
+      const hasImage = Boolean(contents[0]?.parts.some((part) => "inlineData" in part));
+      console.log(
+        `[agent] Gemini request attempt=${attempt + 1}/${MAX_RETRIES + 1} model=${GEMINI_MODEL} hasImage=${hasImage} promptChars=${userText.length}`
+      );
 
-      const response = await fetch(ANTHROPIC_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-          "anthropic-dangerous-direct-browser-access": "true",
-        },
-        body: JSON.stringify({
-          model: CLAUDE_MODEL,
-          max_tokens: MAX_TOKENS,
+      const response = await ai.models.generateContent({
+        model: GEMINI_MODEL,
+        contents,
+        config: {
           temperature: 0,
-          system: SYSTEM_PROMPT,
-          messages: [
-            {
-              role: "user",
-              content: buildContentBlocks(userText, screenshotBase64),
-            },
-          ],
-        }),
+          maxOutputTokens: MAX_TOKENS,
+          systemInstruction: SYSTEM_PROMPT,
+        },
       });
+      console.log(
+        `[agent] Gemini response received candidates=${response.candidates?.length ?? 0} textChars=${response.text?.length ?? 0}`
+      );
 
-      if (!response.ok) {
-        const bodySnippet = (await safeReadText(response)).slice(0, 400);
-        throw new Error(
-          `Claude API HTTP ${response.status} ${response.statusText}. Body: ${bodySnippet}`
-        );
-      }
-
-      const payload = (await response.json()) as AnthropicResponse;
-      const text = extractTextFromAnthropicResponse(payload);
+      const text = extractTextFromGeminiResponse(response);
+      console.log(`[agent] Extracted response text chars=${text.length}`);
       const operations = parseAndValidateOperations(text, trimmedCommand);
 
       console.log(`[agent] Command: "${trimmedCommand}" → ${operations.length} operations`);
@@ -429,24 +398,34 @@ export async function processCommand(
   throw lastError ?? new Error("[agent] ERROR: unknown processing failure");
 }
 
-function buildContentBlocks(
+function buildContents(
   userText: string,
   screenshotBase64: string | null
-): AnthropicContentBlock[] {
-  const blocks: AnthropicContentBlock[] = [];
+): Array<{
+  role: "user";
+  parts: Array<
+    | { text: string }
+    | { inlineData: { mimeType: "image/png"; data: string } }
+  >;
+}> {
+  const parts: Array<
+    | { text: string }
+    | { inlineData: { mimeType: "image/png"; data: string } }
+  > = [];
   const normalizedImage = normalizeScreenshotBase64(screenshotBase64);
   if (normalizedImage) {
-    blocks.push({
-      type: "image",
-      source: {
-        type: "base64",
-        media_type: "image/png",
+    parts.push({
+      inlineData: {
+        mimeType: "image/png",
         data: normalizedImage,
       },
     });
   }
-  blocks.push({ type: "text", text: userText });
-  return blocks;
+  console.log(
+    `[agent] buildContents imageIncluded=${Boolean(normalizedImage)} imageBytes=${normalizedImage?.length ?? 0}`
+  );
+  parts.push({ text: userText });
+  return [{ role: "user", parts }];
 }
 
 function buildUserText(
@@ -493,19 +472,25 @@ function buildUserText(
   return lines.join("\n");
 }
 
-function extractTextFromAnthropicResponse(payload: AnthropicResponse): string {
-  if (payload.error?.message) {
-    throw new Error(`Claude API error: ${payload.error.message}`);
+function extractTextFromGeminiResponse(payload: GenerateContentResponse): string {
+  if (typeof payload.text === "string" && payload.text.trim()) {
+    console.log("[agent] extractTextFromGeminiResponse using payload.text");
+    return payload.text.trim();
   }
 
-  const texts =
-    payload.content
-      ?.filter((block) => block.type === "text" && typeof block.text === "string")
-      .map((block) => block.text ?? "") ?? [];
+  console.log("[agent] extractTextFromGeminiResponse falling back to candidate parts");
+  const candidateTexts: string[] = [];
+  for (const candidate of payload.candidates ?? []) {
+    for (const part of candidate.content?.parts ?? []) {
+      if (typeof part.text === "string" && part.text.trim()) {
+        candidateTexts.push(part.text.trim());
+      }
+    }
+  }
 
-  const joined = texts.join("\n").trim();
+  const joined = candidateTexts.join("\n").trim();
   if (!joined) {
-    throw new Error("Claude response contained no text content.");
+    throw new Error("Gemini response contained no text content.");
   }
 
   return joined;
@@ -528,27 +513,31 @@ function parseAndValidateOperations(
       candidates.push(stripped);
     }
   }
+  console.log(`[agent] parseAndValidateOperations parseCandidates=${candidates.length}`);
 
   let lastParseError: Error | null = null;
   for (const candidate of dedupeStrings(candidates)) {
     try {
+      console.log(`[agent] Attempting JSON parse candidateChars=${candidate.length}`);
       const parsed = JSON.parse(candidate) as unknown;
       return validateOperations(parsed, command);
     } catch (error) {
       lastParseError =
         error instanceof Error ? error : new Error(String(error));
+      console.warn(`[agent] JSON parse candidate failed: ${lastParseError.message}`);
     }
   }
 
   throw new Error(
-    `Unable to parse Claude JSON response. ${lastParseError?.message ?? "No parse attempts succeeded."}`
+    `Unable to parse Gemini JSON response. ${lastParseError?.message ?? "No parse attempts succeeded."}`
   );
 }
 
 function validateOperations(raw: unknown, command: string): EditOperation[] {
   if (!Array.isArray(raw)) {
-    throw new Error("Claude output is not a JSON array.");
+    throw new Error("Gemini output is not a JSON array.");
   }
+  console.log(`[agent] Validating ${raw.length} operation(s)`);
 
   return raw.map((entry, index) => validateOperation(entry, index, command));
 }
@@ -579,6 +568,9 @@ function validateOperation(
   if (!Array.isArray(rawShapes) || rawShapes.length === 0) {
     throw new Error(`Operation ${index} must include non-empty shapes array.`);
   }
+  console.log(
+    `[agent] validateOperation #${index + 1}: action=${action} blend=${blendMode} shapes=${rawShapes.length}`
+  );
 
   const requestedBlendMode = blendMode as EditOperation["blendMode"];
   const normalizedBlendMode = canonicalBlendModeForAction(
@@ -797,14 +789,6 @@ function formatVec3(vec: THREE.Vector3): string {
 
 function formatColor(color: THREE.Color): string {
   return `[${color.r.toFixed(3)}, ${color.g.toFixed(3)}, ${color.b.toFixed(3)}]`;
-}
-
-async function safeReadText(response: Response): Promise<string> {
-  try {
-    return await response.text();
-  } catch {
-    return "";
-  }
 }
 
 export { SYSTEM_PROMPT };

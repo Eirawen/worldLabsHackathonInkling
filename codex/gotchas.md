@@ -47,3 +47,5 @@
 19. **THREE.Color.getHSL() returns hue 0-1, not 0-360.** When using hue for classification heuristics, multiply by 360 to get degrees. The `scene-manifest.ts` color classifier works in degree-space (0-360) after conversion.
 
 20. **Scene-manifest heuristic labels are hints, not ground truth.** The color/height classification in `scene-manifest.ts` (T10 MVP) uses simple rules (green=vegetation, grey+low=ground, etc.). Indoor scenes like libraries will mostly get "structure" and "warm_surface" labels. The labels are context for the LLM agent, not reliable identifiers. Full Claude Vision analysis (T15) is needed for accurate labeling.
+
+21. **Gemini SDK increases client bundle size.** Adding `@google/genai` in browser builds increased the main bundle size warning threshold in Vite. For demo stability this is acceptable, but production should consider code-splitting the agent path or moving LLM calls behind a backend proxy.
