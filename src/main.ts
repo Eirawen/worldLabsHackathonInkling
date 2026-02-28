@@ -5,6 +5,7 @@ import {
   SplatEditSdfType,
 } from "@sparkjsdev/spark";
 import * as THREE from "three";
+import { generateManifest, getManifestJSON } from "./scene-manifest";
 import {
   buildSpatialGrid,
   getCellAtWorldPos,
@@ -12,9 +13,22 @@ import {
   serializeSpatialGridForLLM,
 } from "./spatial-index";
 import { computeSpikeAnchors, formatPoint } from "./spike-utils";
+import type { SceneManifest, SpatialGrid } from "./types";
 import { initViewer, onSplatClick } from "./viewer";
 
 const DEFAULT_SCENE_FILE = "elegant_library_with_fireplace_500k.spz";
+
+// Module-level state accessible by future modules (agent.ts, ui.ts)
+let currentGrid: SpatialGrid | null = null;
+let currentManifest: SceneManifest | null = null;
+
+export function getGrid(): SpatialGrid | null {
+  return currentGrid;
+}
+
+export function getManifest(): SceneManifest | null {
+  return currentManifest;
+}
 
 async function bootstrap() {
   const canvas = document.querySelector<HTMLCanvasElement>("#canvas");
@@ -33,9 +47,18 @@ async function bootstrap() {
   console.log("[main] Viewer initialized");
 
   const spatialGrid = buildSpatialGrid(viewer.splatMesh);
+  currentGrid = spatialGrid;
   const spatialJson = serializeSpatialGridForLLM(spatialGrid);
   console.log(
     `[spatial] Grid ready: occupied=${spatialGrid.cells.size}, serializedBytes=${spatialJson.length}`
+  );
+
+  const manifest = generateManifest(spatialGrid);
+  currentManifest = manifest;
+  const manifestJson = getManifestJSON(manifest);
+  console.log(`[main] Manifest: ${manifest.description}`);
+  console.log(
+    `[main] Manifest regions=${manifest.regions.length}, serializedBytes=${manifestJson.length}`
   );
 
   let lastClickPoint: THREE.Vector3 | null = null;
@@ -49,7 +72,11 @@ async function bootstrap() {
         `[spatial] Click cell ${gridKey(...hitCell.gridPos)} splats=${hitCell.splatCount} density=${hitCell.density.toFixed(2)}`
       );
     } else {
-      console.log("[spatial] Click point outside indexed grid bounds");
+      const gb = spatialGrid.worldBounds;
+      const dy = point.y < gb.min.y ? gb.min.y - point.y : point.y > gb.max.y ? point.y - gb.max.y : 0;
+      console.log(
+        `[spatial] No occupied cell near click (y=${point.y.toFixed(3)}, grid y=[${gb.min.y.toFixed(3)}..${gb.max.y.toFixed(3)}], gap=${dy.toFixed(3)})`
+      );
     }
   });
 
