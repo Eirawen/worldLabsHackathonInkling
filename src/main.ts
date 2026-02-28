@@ -10,7 +10,12 @@ import {
 } from "./spatial-index";
 import type { SceneManifest, SpatialGrid } from "./types";
 import { initUI } from "./ui";
-import { getScreenshot, initViewer, onSplatClick } from "./viewer";
+import {
+  getScreenshot,
+  getScreenshotCropAroundPoint,
+  initViewer,
+  onSplatClick,
+} from "./viewer";
 
 const DEFAULT_SCENE_FILE = "elegant_library_with_fireplace_500k.spz";
 
@@ -90,6 +95,7 @@ async function bootstrap() {
     undoLastEdit,
     getSplatMesh: () => viewer.splatMesh,
     getScreenshot,
+    getScreenshotCropAroundPoint,
     getGrid,
     getManifest,
     getLastClickPoint,

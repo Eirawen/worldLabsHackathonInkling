@@ -49,3 +49,7 @@
 20. **Scene-manifest heuristic labels are hints, not ground truth.** The color/height classification in `scene-manifest.ts` (T10 MVP) uses simple rules (green=vegetation, grey+low=ground, etc.). Indoor scenes like libraries will mostly get "structure" and "warm_surface" labels. The labels are context for the LLM agent, not reliable identifiers. Full Claude Vision analysis (T15) is needed for accurate labeling.
 
 21. **Gemini SDK increases client bundle size.** Adding `@google/genai` in browser builds increased the main bundle size warning threshold in Vite. For demo stability this is acceptable, but production should consider code-splitting the agent path or moving LLM calls behind a backend proxy.
+
+22. **Click crop can be unavailable for off-camera points.** `getScreenshotCropAroundPoint()` projects the 3D click to NDC and returns `null` if depth is outside clip space or projection is non-finite. In this case the pipeline falls back to full-frame screenshot only; watch for `[viewer] Crop skipped` logs.
+
+23. **Over-aggressive floor quantile can suppress tiny targets.** If `VITE_FLOOR_BOTTOM_QUANTILE_REJECT` is set too high, floor protection may remove too many cluster cells and trigger fallback (`floorProtectionFallback_smallCluster`). Start near `0.20` and tune in small increments.

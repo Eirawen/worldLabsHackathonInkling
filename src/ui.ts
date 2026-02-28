@@ -1,10 +1,15 @@
 import type { SplatMesh } from "@sparkjsdev/spark";
 import type * as THREE from "three";
-import { buildClickContext, type processCommand as processCommandFn } from "./agent";
+import {
+  buildClickContext,
+  setSecondaryScreenshotForNextCommand,
+  type processCommand as processCommandFn,
+} from "./agent";
+import { buildLocalSelection, formatSelectionHint } from "./click-selection";
 import type { executeOperations as executeOperationsFn, undoLastEdit as undoLastEditFn } from "./executor";
 import { getManifestJSON } from "./scene-manifest";
 import { getCellAtWorldPos, getNeighborCells } from "./spatial-index";
-import type { SceneManifest, SpatialGrid } from "./types";
+import type { EditOperation, SceneManifest, SpatialGrid } from "./types";
 
 type ProcessCommand = typeof processCommandFn;
 type ExecuteOperations = typeof executeOperationsFn;
@@ -16,6 +21,7 @@ export interface UIDependencies {
   undoLastEdit: UndoLastEdit;
   getSplatMesh: () => SplatMesh;
   getScreenshot: () => string;
+  getScreenshotCropAroundPoint?: (point: THREE.Vector3, sizePx?: number) => string | null;
   getGrid: () => SpatialGrid | null;
   getManifest: () => SceneManifest | null;
   getLastClickPoint: () => THREE.Vector3 | null;
@@ -23,6 +29,26 @@ export interface UIDependencies {
 
 let toastContainer: HTMLDivElement | null = null;
 let initialized = false;
+const ENABLE_CLICK_SELECTION_HINTS =
+  String(import.meta.env.VITE_ENABLE_CLICK_SELECTION_HINTS ?? "true").toLowerCase() !==
+  "false";
+const CROP_SIZE_PX = 320;
+const MIN_SELECTION_CONFIDENCE = 0.35;
+const ENABLE_FLOOR_PROTECTION =
+  String(import.meta.env.VITE_ENABLE_FLOOR_PROTECTION ?? "true").toLowerCase() !==
+  "false";
+const FLOOR_BOTTOM_QUANTILE_REJECT = clampNumber(
+  Number(import.meta.env.VITE_FLOOR_BOTTOM_QUANTILE_REJECT ?? "0.2"),
+  0,
+  0.95,
+  0.2
+);
+const FLOOR_UPWARD_BIAS_FACTOR = clampNumber(
+  Number(import.meta.env.VITE_FLOOR_UPWARD_BIAS_FACTOR ?? "0.08"),
+  0,
+  0.5,
+  0.08
+);
 
 export function initUI(deps: UIDependencies): void {
   if (initialized) {
@@ -31,6 +57,9 @@ export function initUI(deps: UIDependencies): void {
   }
   initialized = true;
   console.log("[ui] Initializing chat UI");
+  console.log(
+    `[ui] Selection config: hintsEnabled=${ENABLE_CLICK_SELECTION_HINTS} floorProtection=${ENABLE_FLOOR_PROTECTION} floorQuantile=${FLOOR_BOTTOM_QUANTILE_REJECT.toFixed(3)} floorUpBias=${FLOOR_UPWARD_BIAS_FACTOR.toFixed(3)}`
+  );
 
   const container = document.createElement("div");
   container.id = "muse-chat-container";
@@ -103,14 +132,21 @@ export function initUI(deps: UIDependencies): void {
       const manifest = deps.getManifest();
       const splatMesh = deps.getSplatMesh();
       const screenshot = normalizeScreenshotDataUrl(deps.getScreenshot());
+      const screenshotCrop =
+        clickPoint && deps.getScreenshotCropAroundPoint
+          ? normalizeScreenshotDataUrl(
+              deps.getScreenshotCropAroundPoint(clickPoint, CROP_SIZE_PX) ?? ""
+            )
+          : "";
       const apiKey = String(import.meta.env.VITE_GEMINI_API_KEY ?? "").trim();
 
       console.log(
-        `[ui] Context: click=${formatVec3OrNull(clickPoint)} grid=${grid ? "ready" : "null"} manifest=${manifest ? "ready" : "null"} screenshotBytes=${screenshot.length} apiKeyPresent=${apiKey.length > 0}`
+        `[ui] Context: click=${formatVec3OrNull(clickPoint)} grid=${grid ? "ready" : "null"} manifest=${manifest ? "ready" : "null"} screenshotBytes=${screenshot.length} cropBytes=${screenshotCrop.length} apiKeyPresent=${apiKey.length > 0}`
       );
 
       const voxelContext = buildVoxelContext(grid, clickPoint);
       const manifestSummary = manifest ? getManifestJSON(manifest) : null;
+      setSecondaryScreenshotForNextCommand(screenshotCrop || null);
       console.log(
         `[ui] Prompt payload: voxelContextChars=${voxelContext?.length ?? 0} manifestChars=${manifestSummary?.length ?? 0}`
       );
@@ -253,7 +289,36 @@ function buildVoxelContext(
   console.log(
     `[ui] buildVoxelContext: cell=${cell ? cell.gridPos.join(",") : "none"} neighbors=${neighbors.length}`
   );
-  return buildClickContext(clickPoint, cell, neighbors);
+  const baseContext = buildClickContext(clickPoint, cell, neighbors);
+
+  if (!ENABLE_CLICK_SELECTION_HINTS) {
+    console.log("[ui] Deterministic selection hints disabled via feature flag");
+    return baseContext;
+  }
+
+  const selection = buildLocalSelection(grid, clickPoint, {
+    enableFloorProtection: ENABLE_FLOOR_PROTECTION,
+    bottomQuantileReject: FLOOR_BOTTOM_QUANTILE_REJECT,
+    minProtectedCells: 2,
+    upwardCenterBiasFactor: FLOOR_UPWARD_BIAS_FACTOR,
+  });
+  if (!selection) {
+    console.log("[ui] Deterministic selection unavailable; using base context");
+    return baseContext;
+  }
+
+  if (selection.confidence < MIN_SELECTION_CONFIDENCE) {
+    console.log(
+      `[ui] Deterministic selection confidence too low (${selection.confidence.toFixed(3)}); fallback to base context`
+    );
+    return baseContext;
+  }
+
+  const hint = formatSelectionHint(selection);
+  console.log(
+    `[ui] Deterministic selection included confidence=${selection.confidence.toFixed(3)} cells=${selection.clusterCellKeys.length}`
+  );
+  return `${baseContext}\n\n${hint}`;
 }
 
 function normalizeScreenshotDataUrl(dataUrl: string): string {
@@ -273,7 +338,7 @@ function formatVec3OrNull(vec: THREE.Vector3 | null): string {
 }
 
 function summarizeOperations(
-  operations: Array<{ action: string; shapes: Array<{ type: string }> }>
+  operations: EditOperation[]
 ): string {
   if (operations.length === 0) {
     return "none";
@@ -281,4 +346,16 @@ function summarizeOperations(
   return operations
     .map((op, index) => `${index + 1}:${op.action}[${op.shapes.map((s) => s.type).join(",")}]`)
     .join(" | ");
+}
+
+function clampNumber(
+  value: number,
+  min: number,
+  max: number,
+  fallback: number
+): number {
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.min(max, Math.max(min, value));
 }
