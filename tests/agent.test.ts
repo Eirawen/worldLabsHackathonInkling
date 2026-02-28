@@ -25,6 +25,7 @@ const API_KEY = "test-api-key";
 afterEach(() => {
   vi.clearAllMocks();
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 describe("SYSTEM_PROMPT", () => {
@@ -194,6 +195,47 @@ describe("processCommand", () => {
 
     expect(mockGoogleGenAI).toHaveBeenCalledTimes(1);
     expect(mockGoogleGenAI).toHaveBeenCalledWith({ apiKey: API_KEY });
+  });
+
+  it("falls back to OpenAI when Gemini fails", async () => {
+    vi.stubEnv("VITE_OPENAI_API_KEY", "openai-fallback-key");
+    vi.stubEnv("VITE_OPENAI_MODEL", "gpt-5.2");
+
+    const busyError = new Error(
+      '{"error":{"code":503,"message":"This model is currently experiencing high demand.","status":"UNAVAILABLE"}}'
+    );
+    mockGenerateContent.mockRejectedValueOnce(busyError).mockRejectedValueOnce(busyError);
+
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            output_text:
+              '[{"action":"delete","blendMode":"MULTIPLY","shapes":[{"type":"SPHERE","position":[1,2,3],"radius":0.8,"opacity":0}]}]',
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }
+        )
+      );
+
+    const ops = await processCommand(
+      "remove this",
+      new THREE.Vector3(1, 2, 3),
+      "cell-data",
+      "scene-summary",
+      null,
+      API_KEY
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.openai.com/v1/responses");
+    const init = fetchMock.mock.calls[0]?.[1];
+    const payload = JSON.parse(String(init?.body)) as { model: string };
+    expect(payload.model).toBe("gpt-5.2");
+    expect(ops[0]?.action).toBe("delete");
   });
 });
 
