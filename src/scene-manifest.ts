@@ -88,7 +88,7 @@ function classifyCell(
   const isMid = normalizedY >= 0.25 && normalizedY < 0.7;
   const isHigh = normalizedY >= 0.7;
 
-  const isVertical = cell.worldBounds.max.y - cell.worldBounds.min.y > yRange.height * 0.15;
+  const isVertical = cell.worldBounds.max.y - cell.worldBounds.min.y > yRange.height * 0.04;
 
   // Blue at high Y → sky
   if (isHigh && hue >= 180 && hue <= 260 && sat > 0.15) {

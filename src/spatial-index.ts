@@ -211,12 +211,20 @@ export function getCellAtWorldPos(
   const cell = grid.cells.get(gridKey(clamped[0], clamped[1], clamped[2]));
   if (cell) return cell;
 
-  // Clamped cell is unoccupied — search neighbors in expanding radius
+  // Clamped cell is unoccupied — search expanding rings for nearest by world distance.
+  // Don't early-exit on first ring hit: a diagonal cell at r=1 can be farther
+  // than an axial cell at r=2, so keep expanding until the ring's minimum
+  // possible distance exceeds our best candidate.
+  const [cx, cy, cz] = clamped;
+  const [rx, ry, rz] = grid.resolution;
+  let nearest: VoxelCell | null = null;
+  let bestDist = Infinity;
+
   for (let r = 1; r <= 5; r++) {
-    const [cx, cy, cz] = clamped;
-    const [rx, ry, rz] = grid.resolution;
-    let nearest: VoxelCell | null = null;
-    let bestDist = Infinity;
+    // Minimum possible world distance for any cell in this ring
+    const minRingDist = Math.min(grid.cellSize.x, grid.cellSize.y, grid.cellSize.z) * (r - 1);
+    if (minRingDist * minRingDist > bestDist) break; // can't beat current best
+
     for (let x = Math.max(0, cx - r); x <= Math.min(rx - 1, cx + r); x++) {
       for (let y = Math.max(0, cy - r); y <= Math.min(ry - 1, cy + r); y++) {
         for (let z = Math.max(0, cz - r); z <= Math.min(rz - 1, cz + r); z++) {
@@ -231,10 +239,9 @@ export function getCellAtWorldPos(
         }
       }
     }
-    if (nearest) return nearest;
   }
 
-  return null;
+  return nearest;
 }
 
 export function getNeighborCells(
