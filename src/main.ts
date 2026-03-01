@@ -1,18 +1,6 @@
 import * as THREE from "three";
-import type { SplatMesh } from "@sparkjsdev/spark";
 import { processCommand } from "./agent";
-import {
-  executeOperations,
-  setAssetExtractionHandler,
-  undoLastEdit,
-} from "./executor";
-import {
-  addAsset,
-  createPlacedAssetMesh,
-  extractAssetFromDeleteOperation,
-  getAssetById,
-  listAssets,
-} from "./asset-library";
+import { executeOperations, undoLastEdit } from "./executor";
 import { generateManifest, getManifestJSON } from "./scene-manifest";
 import {
   buildSpatialGrid,
@@ -24,7 +12,6 @@ import type { SceneManifest, SpatialGrid } from "./types";
 import { initUI } from "./ui";
 import {
   getScreenshot,
-  getScreenshotCropAroundPoint,
   initViewer,
   onSplatClick,
 } from "./viewer";
@@ -57,11 +44,15 @@ async function bootstrap() {
 
   const sceneUrl = `/scenes/${DEFAULT_SCENE_FILE}`;
   info?.replaceChildren(`Loading ${DEFAULT_SCENE_FILE}...`);
+  console.log(`[main] bootstrap start scene=${sceneUrl}`);
 
   const viewer = await initViewer(canvas, sceneUrl);
 
   info?.replaceChildren(`Loaded ${DEFAULT_SCENE_FILE}`);
-  console.log("[main] Viewer initialized");
+  console.log("[main] Viewer initialized", {
+    cameraPos: viewer.camera.position.toArray(),
+    sceneChildren: viewer.scene.children.length,
+  });
 
   const spatialGrid = buildSpatialGrid(viewer.splatMesh);
   currentGrid = spatialGrid;
@@ -100,20 +91,7 @@ async function bootstrap() {
       );
     }
   });
-
-  setAssetExtractionHandler((op, parent) => {
-    const extractionMesh = resolveSplatMesh(parent, viewer.splatMesh);
-    const asset = extractAssetFromDeleteOperation(op, extractionMesh, DEFAULT_SCENE_FILE);
-    if (!asset) {
-      console.log("[main] No asset extracted for current delete operation");
-      return;
-    }
-
-    addAsset(asset);
-    console.log(
-      `[main] Asset saved id=${asset.id} label=\"${asset.label}\" splats=${asset.splatCount}`
-    );
-  });
+  console.log("[main] Splat click listener ready");
 
   initUI({
     processCommand,
@@ -121,47 +99,18 @@ async function bootstrap() {
     undoLastEdit,
     getSplatMesh: () => viewer.splatMesh,
     getScreenshot,
-    getScreenshotCropAroundPoint,
     getGrid,
     getManifest,
     getLastClickPoint,
-    onSplatClick,
-    listAssets,
-    getAssetById,
-    createPlacedAssetMesh,
-    getPlacementParent: () => viewer.scene,
   });
+  console.log("[main] UI initialized (classic mode)");
 
   window.addEventListener("keydown", (event) => {
     if (event.key.toLowerCase() === "l" && lastClickPoint) {
       console.log("[main] Last clicked point:", lastClickPoint.toArray());
     }
   });
-}
-
-function resolveSplatMesh(parent: THREE.Object3D, fallback: SplatMesh): SplatMesh {
-  if (looksLikeSplatMesh(parent)) {
-    return parent;
-  }
-
-  let current: THREE.Object3D | null = parent.parent;
-  while (current) {
-    if (looksLikeSplatMesh(current)) {
-      return current;
-    }
-    current = current.parent;
-  }
-
-  return fallback;
-}
-
-function looksLikeSplatMesh(obj: unknown): obj is SplatMesh {
-  return (
-    typeof obj === "object" &&
-    obj !== null &&
-    typeof (obj as SplatMesh).forEachSplat === "function" &&
-    typeof (obj as SplatMesh).getBoundingBox === "function"
-  );
+  console.log("[main] bootstrap complete");
 }
 
 bootstrap().catch((error) => {

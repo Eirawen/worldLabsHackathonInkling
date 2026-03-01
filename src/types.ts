@@ -19,6 +19,12 @@ export interface SpatialGrid {
   cells: Map<string, VoxelCell>;
 }
 
+export interface SelectionBoxState {
+  center: THREE.Vector3;
+  size: THREE.Vector3;
+  bounds: THREE.Box3;
+}
+
 export interface SceneManifest {
   description: string;
   regions: SemanticRegion[];

@@ -1,0 +1,37 @@
+{
+  "operations": [
+    {
+      "id": "paint_wall_magenta",
+      "mode": "paint",
+      "shape": "capsule",
+      "origin": [-0.5, 1.4, -0.2],
+      "direction": [0, 0, 1],
+      "depth": 2.5,
+      "radius": 0.35,
+      "strength": 0.6,
+      "falloff": "linear",
+      "colorDc": [0.9, -0.2, 0.9],
+      "opacityMin": -6
+    },
+    {
+      "id": "soft_erase_floor_patch",
+      "mode": "erase",
+      "shape": "sphere",
+      "center": [-0.1, -1.7, 0.4],
+      "radius": 0.45,
+      "strength": 0.8,
+      "falloff": "smoothstep",
+      "eraseOpacity": -18
+    },
+    {
+      "id": "darken_corner",
+      "mode": "darken",
+      "shape": "box",
+      "center": [1.0, 0.3, 1.2],
+      "halfSize": [0.5, 0.7, 0.5],
+      "strength": 0.35,
+      "falloff": "linear",
+      "amount": 0.25
+    }
+  ]
+}
